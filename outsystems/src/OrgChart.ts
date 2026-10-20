@@ -30,6 +30,10 @@ namespace OutSystems.OrgChart.Patterns {
 			Data: string;
 			IdField: string;
 			ParentIdField: string;
+			TitleField: string;
+			SubtitleField: string;
+			ImageUrlField: string;
+			ClassField: string;
 			NodeTemplate: string;
 			Layout: Enum.Layout;
 			Compact: boolean;
@@ -83,7 +87,13 @@ namespace OutSystems.OrgChart.Patterns {
 						return value === undefined || value === null ? '' : value;
 					case Enum.Properties.IdField:
 					case Enum.Properties.ParentIdField:
+					case Enum.Properties.TitleField:
+					case Enum.Properties.SubtitleField:
+					case Enum.Properties.ImageUrlField:
+					case Enum.Properties.ClassField:
+						return value === undefined || value === null ? Enum.Defaults[key] : String(value);
 					case Enum.Properties.NodeTemplate:
+						return value === undefined || value === null ? '' : String(value);
 					case Enum.Properties.Height:
 					case Enum.Properties.AriaLabel:
 						return this.validateString(value as string, Enum.Defaults[key]);
@@ -163,12 +173,23 @@ namespace OutSystems.OrgChart.Patterns {
 					this._trigger(this._platformEventOnRenderFailed, (error as Error).message);
 				}
 
+				// The fixed card, unless the advanced NodeTemplate input is set
 				const template = this.configs.NodeTemplate;
+				const cardFields: Helper.CardFields = {
+					title: this.configs.TitleField,
+					subtitle: this.configs.SubtitleField,
+					imageUrl: this.configs.ImageUrlField,
+					className: this.configs.ClassField,
+				};
 				const chart = new window.d3.OrgChart()
 					.container(this.selfElement)
 					.nodeId((row) => this._getRowId(row))
 					.parentNodeId((row) => Helper.NormalizeId(Helper.GetValue(row, this.configs.ParentIdField)))
-					.nodeContent((node) => Helper.RenderTemplate(template, node.data))
+					.nodeContent((node) =>
+						template === ''
+							? Helper.RenderCard(node.data, cardFields)
+							: Helper.RenderTemplate(template, node.data)
+					)
 					.onNodeClick((node) => {
 						this._trigger(this._platformEventOnNodeClick, this._getRowId(node.data));
 					})

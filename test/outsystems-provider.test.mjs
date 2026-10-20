@@ -20,7 +20,11 @@ const blockConfigs = (overrides = {}) => ({
     Data: JSON.stringify(employees),
     IdField: 'Employee.Id',
     ParentIdField: 'Employee.ManagerId',
-    NodeTemplate: '<div class="osui-org-chart__card"><div class="osui-org-chart__card-name">{{Employee.Name}}</div><div class="osui-org-chart__card-title">{{Employee.Title}}</div></div>',
+    TitleField: 'Employee.Name',
+    SubtitleField: 'Employee.Title',
+    ImageUrlField: 'Employee.PhotoUrl',
+    ClassField: '',
+    NodeTemplate: '',
     Layout: 'top',
     Compact: false,
     NodeWidth: 220,
@@ -113,13 +117,31 @@ for (const version of ['2.30.0', '3.0.0']) {
             await page.close();
         });
 
-        test('escapes data in the node template', async () => {
+        test('draws the fixed card from escaped values', async () => {
             const page = await openBlock(browser, version);
-            const data = [{ Employee: { Id: 1, ManagerId: 0, Name: '<img src=x onerror="window.pwned=1">', Title: 'CEO' } }];
+            const data = [
+                { Employee: { Id: 1, ManagerId: 0, Name: '<img src=x onerror="window.pwned=1">', Title: 'CEO', PhotoUrl: '' } },
+                { Employee: { Id: 2, ManagerId: 1, Name: 'Omer Cohen', Title: 'CTO', PhotoUrl: 'javascript:window.pwned=2' } },
+                { Employee: { Id: 3, ManagerId: 1, Name: 'Noa Mizrahi', Title: 'CFO', PhotoUrl: '/img/noa.png' } },
+            ];
             await initialize(page, blockConfigs({ Data: JSON.stringify(data) }));
             await waitForEvents(page);
             assert.equal(await page.evaluate(() => window.pwned), undefined);
-            assert.equal(await page.$eval('#b1-Container .osui-org-chart__card-name', el => el.textContent), data[0].Employee.Name);
+            const cards = await page.$$eval('#b1-Container .osui-org-chart__card', els => Object.fromEntries(els.map(el => [
+                el.closest('g.node').__data__.id,
+                { name: el.querySelector('.osui-org-chart__card-name').textContent, avatar: el.querySelector('.osui-org-chart__card-avatar').innerHTML },
+            ])));
+            assert.equal(cards['1'].name, data[0].Employee.Name);
+            assert.equal(cards['2'].avatar, '<span aria-hidden="true">OC</span>');
+            assert.equal(cards['3'].avatar, '<img src="/img/noa.png" alt="">');
+            await page.close();
+        });
+
+        test('NodeTemplate replaces the card when set', async () => {
+            const page = await openBlock(browser, version);
+            await initialize(page, blockConfigs({ NodeTemplate: '<b class="custom">{{Employee.Name}} &middot; {{Employee.Title}}</b>' }));
+            const texts = await page.$$eval('#b1-Container .custom', els => els.map(e => e.textContent).sort());
+            assert.deepEqual(texts, ['Dana Levi · CEO', 'Noa Mizrahi · CFO', 'Omer Cohen · CTO', 'Yael Shapiro · Developer']);
             await page.close();
         });
 

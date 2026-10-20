@@ -22,6 +22,10 @@ namespace OutSystems.OrgChart.Enum {
 		Data = 'Data',
 		IdField = 'IdField',
 		ParentIdField = 'ParentIdField',
+		TitleField = 'TitleField',
+		SubtitleField = 'SubtitleField',
+		ImageUrlField = 'ImageUrlField',
+		ClassField = 'ClassField',
 		NodeTemplate = 'NodeTemplate',
 		Layout = 'Layout',
 		Compact = 'Compact',
@@ -51,6 +55,8 @@ namespace OutSystems.OrgChart.Enum {
 		Pattern = 'osui-org-chart',
 		Container = 'osui-org-chart__container',
 		Card = 'osui-org-chart__card',
+		CardAvatar = 'osui-org-chart__card-avatar',
+		CardText = 'osui-org-chart__card-text',
 		CardName = 'osui-org-chart__card-name',
 		CardTitle = 'osui-org-chart__card-title',
 		Message = 'osui-org-chart__message',
@@ -78,13 +84,6 @@ namespace OutSystems.OrgChart.Enum {
 		Height = '--osui-org-chart-height',
 	}
 
-	/** Template used when the NodeTemplate input is empty. {{Field}} placeholders are replaced with escaped data */
-	export const DefaultNodeTemplate =
-		'<div class="osui-org-chart__card">' +
-		'<div class="osui-org-chart__card-name">{{Name}}</div>' +
-		'<div class="osui-org-chart__card-title">{{Title}}</div>' +
-		'</div>';
-
 	export const Defaults = {
 		IdField: 'Id',
 		ParentIdField: 'ParentId',
@@ -96,7 +95,11 @@ namespace OutSystems.OrgChart.Enum {
 		InitialExpandLevel: 1,
 		Rtl: Rtl.Auto,
 		AriaLabel: 'Organization chart',
-		NodeTemplate: DefaultNodeTemplate,
+		TitleField: 'Title',
+		SubtitleField: 'Subtitle',
+		ImageUrlField: 'ImageUrl',
+		ClassField: 'ExtendedClass',
+		NodeTemplate: '',
 	};
 
 	export const ProviderInfo = {

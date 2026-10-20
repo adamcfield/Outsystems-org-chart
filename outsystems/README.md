@@ -37,7 +37,11 @@ The block contains a Container whose `name` is the block's unique id (`OrgChartI
 | Data | Text | | JSONSerialize of the list. Aggregate rows are nested by entity, so use `Entity.Attribute` in the field names. |
 | IdField | Text | `Id` | Attribute name or dotted path. |
 | ParentIdField | Text | `ParentId` | Empty, `0` or null means top of the tree. Exactly one top record is required. |
-| NodeTemplate | Text | Name + Title card | HTML with `{{Field}}` placeholders; values are HTML-escaped. |
+| TitleField | Text | `Title` | Card title (e.g. the person's name) |
+| SubtitleField | Text | `Subtitle` | Card subtitle (e.g. the position) |
+| ImageUrlField | Text | `ImageUrl` | Photo URL; initials of the title when empty |
+| ClassField | Text | `ExtendedClass` | Extra CSS class per card |
+| NodeTemplate | Text | | Advanced: HTML with `{{Field}}` placeholders (values escaped) that replaces the card |
 | Layout | Text | `top` | `top`, `bottom`, `left`, `right` |
 | Compact | Boolean | True | |
 | NodeWidth, NodeHeight | Integer | 250, 120 | Pixels |

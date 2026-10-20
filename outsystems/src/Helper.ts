@@ -121,4 +121,43 @@ namespace OutSystems.OrgChart.Helper {
 	export function RenderTemplate(template: string, row: Row): string {
 		return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_match, path: string) => EscapeHtml(GetValue(row, path)));
 	}
+
+	export type CardFields = { title: string; subtitle: string; imageUrl: string; className: string };
+
+	// Only web and relative image addresses are used; anything else (e.g. javascript:) falls back to initials
+	function IsSafeImageUrl(url: string): boolean {
+		return /^(https?:\/\/|\/|\.{0,2}\/|data:image\/)/i.test(url) || !/^[a-z][a-z0-9+.-]*:/i.test(url);
+	}
+
+	function Initials(title: string): string {
+		return title
+			.split(/\s+/)
+			.filter((word) => word !== '')
+			.slice(0, 2)
+			.map((word) => Array.from(word)[0].toUpperCase())
+			.join('');
+	}
+
+	/** The block's node card: photo (or initials), title and subtitle, all values HTML-escaped */
+	export function RenderCard(row: Row, fields: CardFields): string {
+		const text = (path: string) => {
+			const value = path === '' ? undefined : GetValue(row, path);
+			return value === null || value === undefined ? '' : String(value);
+		};
+		const title = text(fields.title);
+		const imageUrl = text(fields.imageUrl).trim();
+		const avatar =
+			imageUrl !== '' && IsSafeImageUrl(imageUrl)
+				? `<img src="${EscapeHtml(imageUrl)}" alt="" />`
+				: `<span aria-hidden="true">${EscapeHtml(Initials(title))}</span>`;
+		const extendedClass = text(fields.className).trim();
+		return (
+			`<div class="${Enum.CssClass.Card}${extendedClass === '' ? '' : ' ' + EscapeHtml(extendedClass)}">` +
+			`<div class="${Enum.CssClass.CardAvatar}">${avatar}</div>` +
+			`<div class="${Enum.CssClass.CardText}">` +
+			`<div class="${Enum.CssClass.CardName}">${EscapeHtml(title)}</div>` +
+			`<div class="${Enum.CssClass.CardTitle}">${EscapeHtml(text(fields.subtitle))}</div>` +
+			'</div></div>'
+		);
+	}
 }
