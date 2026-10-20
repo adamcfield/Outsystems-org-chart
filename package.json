@@ -1,8 +1,8 @@
 {
-  "name": "d3-org-chart",
-  "version": "3.1.1",
-  "module": "index",
-  "description": "Highly customizable org chart, created with d3",
+  "name": "@adamcfield/d3-org-chart",
+  "version": "4.0.0-alpha.0",
+  "private": true,
+  "description": "Highly customizable org chart, created with d3. Maintained fork of bumbeishvili/org-chart.",
   "keywords": [
     "d3",
     "d3-module",
@@ -12,48 +12,59 @@
     "employee"
   ],
   "license": "MIT",
-  "main": "build/d3-org-chart.min.js",
-  "jsdelivr": "build/d3-org-chart.min.js",
-  "unpkg": "build/d3-org-chart.min.js",
+  "type": "module",
+  "main": "./dist/d3-org-chart.esm.js",
+  "module": "./dist/d3-org-chart.esm.js",
+  "types": "./index.d.ts",
+  "unpkg": "./dist/d3-org-chart.min.js",
+  "jsdelivr": "./dist/d3-org-chart.min.js",
   "exports": {
-    "umd": "./build/d3-org-chart.min.js",
-    "default": "./src/d3-org-chart.js"
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./dist/d3-org-chart.esm.js",
+      "default": "./dist/d3-org-chart.esm.js"
+    },
+    "./standalone": "./dist/d3-org-chart.js",
+    "./standalone.min": "./dist/d3-org-chart.min.js"
   },
-  "jsnext:main": "index",
-  "bugs": {
-    "url": "https://github.com/bumbeishvili/d3-organization-chart/issues"
-  },
-  "homepage": "https://github.com/bumbeishvili/d3-organization-chart#readme",
+  "files": [
+    "dist",
+    "src",
+    "index.js",
+    "index.d.ts"
+  ],
+  "sideEffects": false,
   "repository": {
     "type": "git",
-    "url": "https://github.com/bumbeishvili/d3-organization-chart.git"
+    "url": "git+https://github.com/adamcfield/outsystems-org-chart.git"
+  },
+  "bugs": {
+    "url": "https://github.com/adamcfield/outsystems-org-chart/issues"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "scripts": {
-    "start": "nodemon ",
-    "_pretest": "rm -rf build && mkdir build && rollup -c --banner \"$(preamble)\"",
-    "_test": "tape 'test/**/*-test.js'",
-    "_prepublish": "npm run test && uglifyjs build/d3-org-chart.js -c -m -o build/d3-org-chart.min.js",
-    "_postpublish": "zip -j build/d3-org-chart.zip -- LICENSE README.md build/d3-org-chart.js build/d3-org-chart.min.js",
-    "pretest": "rm -rf build && mkdir build && rollup -g d3-selection:d3,d3-array:d3,d3-hierarchy:d3,d3-zoom:d3,d3-flextree:d3,d3-shape:d3,d3-group:d3  -f umd -n d3 -o build/d3-org-chart.js -- index.js",
-    "test": "tape 'test/**/*-test.js'",
-    "prepublish": "npm run test && uglifyjs build/d3-org-chart.js -c -m -o build/d3-org-chart.min.js",
-    "postpublish": "zip -j build/d3-org-chart.zip -- LICENSE README.md build/d3-org-chart.js build/d3-org-chart.min.js"
-  },
-  "devDependencies": {
-    "@babel/core": "^7.7.7",
-    "@babel/preset-env": "^7.7.7",
-    "babel": "^6.23.0",
-    "package-preamble": "0.1",
-    "rollup": "0.27",
-    "tape": "4",
-    "uglify-js": "3"
+    "build": "node scripts/build.mjs",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "d3-selection": "3",
-    "d3-array": "3",
-    "d3-hierarchy": "3",
-    "d3-zoom": "3",
-    "d3-shape": "3",
-    "d3-flextree": "2.1.2"
+    "d3-array": "^3.2.4",
+    "d3-flextree": "2.1.2",
+    "d3-hierarchy": "^3.1.2",
+    "d3-selection": "^3.0.0",
+    "d3-shape": "^3.2.0",
+    "d3-transition": "^3.0.1",
+    "d3-zoom": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/d3-hierarchy": "^3.1.7",
+    "@types/d3-selection": "^3.0.11",
+    "@types/d3-shape": "^3.1.7",
+    "@types/d3-zoom": "^3.0.8",
+    "esbuild": "^0.25.0",
+    "playwright-core": "^1.55.0",
+    "typescript": "^5.9.3"
   }
 }
