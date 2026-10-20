@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2019",
+    "lib": ["ES2019", "DOM"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noImplicitOverride": false,
+    "useDefineForClassFields": false,
+    "strictPropertyInitialization": false,
+    "removeComments": false,
+    "outFile": "../build/outsystems/OrgChart.Provider.js",
+    "types": []
+  },
+  "files": [
+    "types/OutSystemsUI.d.ts",
+    "types/OutSystemsUI.globals.d.ts",
+    "types/d3-org-chart-global.d.ts",
+    "src/Enum.ts",
+    "src/Helper.ts",
+    "src/OrgChart.ts",
+    "src/OrgChartAPI.ts"
+  ]
+}
