@@ -54,7 +54,7 @@ async function initialize(page, configs) {
     return page.evaluate(configs => {
         const api = OutSystems.OrgChart.OrgChartAPI;
         api.Create('oc1', JSON.stringify(configs));
-        const responses = ['Initialized', 'OnNodeClick', 'OnExpandToggle', 'OnExportReady'].map(event =>
+        const responses = ['Initialized', 'OnNodeClick', 'OnExpandToggle', 'OnExportReady', 'OnRenderFailed'].map(event =>
             JSON.parse(api.RegisterCallback('oc1', event, window.record(event)))
         );
         api.Initialize('oc1');
@@ -174,6 +174,10 @@ for (const version of ['2.30.0', '3.0.0']) {
             await initialize(page, blockConfigs({ Data: JSON.stringify(orphan) }));
             assert.match(await page.$eval('#b1-Container .osui-org-chart__message', el => el.textContent), /not in the data: 9/);
             assert.deepEqual(await nodeIds(page), []);
+            await waitForEvents(page);
+            const [[widgetId, message]] = await events(page, 'OnRenderFailed');
+            assert.equal(widgetId, 'b1-OrgChart');
+            assert.match(message, /not in the data: 9/);
 
             // Fixing the data removes the message and draws the chart
             await page.evaluate(data => OutSystems.OrgChart.OrgChartAPI.ChangeProperty('oc1', 'Data', data), JSON.stringify(employees));
@@ -207,6 +211,12 @@ for (const version of ['2.30.0', '3.0.0']) {
             assert.equal((await api('ClearHighlight')).isSuccess, true);
             assert.equal((await api('CenterNode', '3')).isSuccess, true);
             assert.equal((await api('Fit')).isSuccess, true);
+            const scale = () => page.evaluate(() => OutSystems.OrgChart.OrgChartAPI.GetOrgChartById('oc1').provider.lastTransform().k);
+            const before = await scale();
+            assert.equal((await api('ZoomIn')).isSuccess, true);
+            await waitForTransitions(page);
+            assert.ok(await scale() > before);
+            assert.equal((await api('ZoomOut')).isSuccess, true);
             assert.equal((await api('CollapseAll')).isSuccess, true);
 
             const missing = await api('HighlightNode', '404', false);

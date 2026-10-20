@@ -111,4 +111,12 @@ namespace OutSystems.OrgChart.OrgChartAPI {
 			orgChart.setProviderConfigs(providerConfigs as ProviderConfigs)
 		);
 	}
+
+	export function ZoomIn(orgChartId: string): string {
+		return WithChart(orgChartId, Enum.ErrorCodes.FailZoomIn, (orgChart) => orgChart.zoomIn());
+	}
+
+	export function ZoomOut(orgChartId: string): string {
+		return WithChart(orgChartId, Enum.ErrorCodes.FailZoomOut, (orgChart) => orgChart.zoomOut());
+	}
 }

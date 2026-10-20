@@ -13,6 +13,13 @@ patterns (Carousel, DatePicker, ...). Tested against OutSystems UI 2.30.0 and 3.
 
 The script can load before or after OutSystemsUI.js.
 
+## Design rule
+
+The JavaScript is only the rendering engine. Everything the app does to the chart goes through a block input or a
+client action (search is an OutSystems widget that calls `HighlightNode` / `CenterNode`), and everything the user
+does in the chart comes back as a block event. The chart has no UI of its own beyond zoom / pan, the expand
+buttons (which raise `OnExpandToggle`) and keyboard navigation.
+
 ## Block
 
 The block contains a Container whose `name` is the block's unique id (`OrgChartId`), like OutSystems UI blocks.
@@ -41,7 +48,7 @@ The block contains a Container whose `name` is the block's unique id (`OrgChartI
 | ExtendedClass | Text | | |
 
 Data that is not a single tree (orphans, loops, several top records, duplicate ids) is never dropped silently: on
-first draw the block shows the reason, and `ChangeProperty` returns it as an error and keeps the current chart.
+first draw the block shows the reason and raises OnRenderFailed, and `ChangeProperty` returns it as an error and keeps the current chart.
 
 ## Events
 
@@ -54,6 +61,7 @@ widget id first.
 | OnNodeClick | NodeId (Text) |
 | OnExpandToggle | NodeId (Text), IsExpanded (Boolean) |
 | OnExportReady | ImageDataUrl (Text, PNG) |
+| OnRenderFailed | Message (Text): the data could not be drawn (first draw or redraw) |
 | OnProviderConfigsApplied | |
 
 ## Client actions
@@ -62,7 +70,7 @@ Each takes the OrgChartId (the unique id or the block's widget id) and returns a
 `{"code","isSuccess","message"}`, like the OutSystems UI client actions.
 
 `ExpandAll`, `CollapseAll`, `SetExpanded(NodeId, Expanded)`, `CenterNode(NodeId)`,
-`HighlightNode(NodeId, WithAncestors)`, `ClearHighlight`, `Fit`, `ExportImage(Full)`,
+`HighlightNode(NodeId, WithAncestors)`, `ClearHighlight`, `Fit`, `ZoomIn`, `ZoomOut`, `ExportImage(Full)`,
 `SetProviderConfigs(Configs)`: raw d3-org-chart attributes as JSON, applied over the inputs (for example
 `{"childrenMargin":80}`).
 

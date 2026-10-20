@@ -14,6 +14,7 @@ namespace OutSystems.OrgChart.Enum {
 		OnNodeClick = 'OnNodeClick',
 		OnExpandToggle = 'OnExpandToggle',
 		OnExportReady = 'OnExportReady',
+		OnRenderFailed = 'OnRenderFailed',
 	}
 
 	/** Configuration properties, as sent by the block (see OrgChartConfig) */
@@ -69,6 +70,8 @@ namespace OutSystems.OrgChart.Enum {
 		FailClearHighlight: 'ORGCHART-API-01010',
 		FailFit: 'ORGCHART-API-01011',
 		FailExportImage: 'ORGCHART-API-01012',
+		FailZoomIn: 'ORGCHART-API-01013',
+		FailZoomOut: 'ORGCHART-API-01014',
 	};
 
 	export enum CssVariables {

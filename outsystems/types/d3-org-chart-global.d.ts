@@ -21,6 +21,8 @@ declare namespace D3OrgChart {
 		onNodeClick(value: (node: HierarchyNode, event: Event) => void): Chart;
 		onExpandOrCollapse(value: (node: HierarchyNode, expanded: boolean) => void): Chart;
 		render(): Chart;
+		zoomIn(): Chart;
+		zoomOut(): Chart;
 		fit(options?: { animate?: boolean }): Chart;
 		expandAll(): Chart;
 		collapseAll(): Chart;

@@ -11,6 +11,8 @@ namespace OutSystems.OrgChart.Patterns {
 		fit(): void;
 		highlightNode(nodeId: string, withAncestors: boolean): void;
 		setExpanded(nodeId: string, expanded: boolean): void;
+		zoomIn(): void;
+		zoomOut(): void;
 	}
 
 	type Factory = new (uniqueId: string, configs: JSON) => IOrgChart;
@@ -127,6 +129,7 @@ namespace OutSystems.OrgChart.Patterns {
 			private _platformEventOnExpandToggle: OSFramework.OSUI.GlobalCallbacks.OSGeneric | undefined;
 			private _platformEventOnExportReady: OSFramework.OSUI.GlobalCallbacks.OSGeneric | undefined;
 			private _platformEventOnNodeClick: OSFramework.OSUI.GlobalCallbacks.OSGeneric | undefined;
+			private _platformEventOnRenderFailed: OSFramework.OSUI.GlobalCallbacks.OSGeneric | undefined;
 
 			constructor(uniqueId: string, configs: JSON) {
 				super(uniqueId, new OrgChartConfig(configs));
@@ -157,6 +160,7 @@ namespace OutSystems.OrgChart.Patterns {
 				} catch (error) {
 					console.error(`${Enum.PatternName} (${this.widgetId}): ${(error as Error).message}`);
 					this._setMessage((error as Error).message);
+					this._trigger(this._platformEventOnRenderFailed, (error as Error).message);
 				}
 
 				const template = this.configs.NodeTemplate;
@@ -246,6 +250,7 @@ namespace OutSystems.OrgChart.Patterns {
 				this._platformEventOnExpandToggle = undefined;
 				this._platformEventOnExportReady = undefined;
 				this._platformEventOnNodeClick = undefined;
+				this._platformEventOnRenderFailed = undefined;
 				super.unsetCallbacks();
 			}
 
@@ -360,6 +365,9 @@ namespace OutSystems.OrgChart.Patterns {
 					case Enum.Events.OnExportReady:
 						this._platformEventOnExportReady = callback;
 						break;
+					case Enum.Events.OnRenderFailed:
+						this._platformEventOnRenderFailed = callback;
+						break;
 					default:
 						super.registerCallback(eventName, callback);
 				}
@@ -394,6 +402,14 @@ namespace OutSystems.OrgChart.Patterns {
 					}
 				}
 				this.provider.render();
+			}
+
+			public zoomIn(): void {
+				this.provider.zoomIn();
+			}
+
+			public zoomOut(): void {
+				this.provider.zoomOut();
 			}
 
 			public setProviderConfigs(newConfigs: ProviderConfigs): void {
