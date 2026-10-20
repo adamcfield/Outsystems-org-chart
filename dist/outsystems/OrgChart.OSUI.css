@@ -1,0 +1,100 @@
+/*
+ * OutSystems UI theme for the org chart.
+ * Maps the chart's --oc-* variables to OutSystems UI theme roles, so the chart follows the app theme
+ * (including dark mode via .os-dark-theme). Add the class "osui-org-chart" to the chart container.
+ */
+.osui-org-chart {
+    --oc-link-color: var(--color-border, #E4E2E9);
+    --oc-highlight-color: var(--color-primary, #E27396);
+    --oc-node-background: var(--color-background-surface, none);
+    --oc-button-background: var(--color-background-surface, #FFFFFF);
+    --oc-button-border-color: var(--color-border, #E4E2E9);
+    --oc-button-color: var(--color-text-subtle, #716E7B);
+    --oc-paging-background: var(--color-background-body, #E5E9F2);
+    --oc-paging-color: var(--color-text-subtle, #716E7B);
+    --oc-connection-color: var(--color-primary, #E27396);
+    --oc-connection-label-color: var(--color-text-inverse, #FFFFFF);
+    --oc-focus-color: var(--color-focus-outer, #1068EB);
+}
+
+/* Use the app font instead of the chart's default font */
+.osui-org-chart svg.svg-chart-container {
+    font-family: inherit !important;
+}
+
+/*
+ * Styles for the OrgChart block. Appended to themes/osui.css in dist/outsystems/OrgChart.OSUI.css.
+ * Colors, radius and shadows come from the OutSystems UI theme variables, so the block follows the app theme.
+ */
+.osui-org-chart {
+    position: relative;
+    height: var(--osui-org-chart-height, 600px);
+    width: 100%;
+}
+
+.osui-org-chart__card {
+    align-items: center;
+    background-color: var(--color-neutral-0, #FFFFFF);
+    border: var(--border-size-s, 1px) solid var(--color-neutral-4, #DEE2E6);
+    border-radius: var(--border-radius-soft, 4px);
+    box-shadow: var(--shadow-s, 0 2px 4px 0 rgba(0, 0, 0, 0.08));
+    box-sizing: border-box;
+    color: var(--color-neutral-10, #212529);
+    display: flex;
+    gap: var(--space-s, 12px);
+    height: 100%;
+    padding: var(--space-m, 16px);
+    text-align: start;
+}
+
+.osui-org-chart__card-avatar {
+    align-items: center;
+    background-color: var(--color-primary-lightest, #EBF0FF);
+    border-radius: var(--border-radius-circle, 100%);
+    color: var(--color-primary, #1068EB);
+    display: flex;
+    flex-shrink: 0;
+    font-weight: var(--font-semi-bold, 600);
+    height: 48px;
+    justify-content: center;
+    overflow: hidden;
+    width: 48px;
+}
+
+.osui-org-chart__card-avatar img {
+    height: 100%;
+    object-fit: cover;
+    width: 100%;
+}
+
+.osui-org-chart__card-text {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs, 4px);
+    min-width: 0;
+}
+
+.osui-org-chart__card-name {
+    font-size: var(--font-size-base, 16px);
+    font-weight: var(--font-semi-bold, 600);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.osui-org-chart__card-title {
+    color: var(--color-neutral-7, #6A7178);
+    font-size: var(--font-size-s, 14px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.osui-org-chart__message {
+    color: var(--color-error, #DC2626);
+    font-size: var(--font-size-s, 14px);
+    left: 0;
+    padding: var(--space-m, 16px);
+    position: absolute;
+    top: 0;
+}

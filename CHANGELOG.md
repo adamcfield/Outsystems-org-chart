@@ -28,6 +28,7 @@ First release of the maintained fork. Based on upstream `d3-org-chart` 3.1.1, wh
 - Theming: all built-in colors are `--oc-*` CSS variables with the v3 colors as fallbacks; exported images resolve them. `themes/osui.css` maps them to OutSystems UI theme roles.
 - TypeScript definitions (`index.d.ts`), based on `@types/d3-org-chart`.
 - Headless Chromium test suite and CI.
+- OutSystems 11 Reactive provider (`outsystems/`, built to `dist/outsystems/`): `OutSystems.OrgChart.OrgChartAPI`, following the OutSystems UI provider pattern, with data validation, `{{Field}}` node templates and OutSystems UI block styles. See `outsystems/README.md`.
 
 ### Fixed
 
