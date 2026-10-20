@@ -4,6 +4,8 @@ import { tree, stratify } from "d3-hierarchy";
 import { zoom, zoomIdentity } from "d3-zoom";
 import { flextree } from 'd3-flextree';
 import { linkHorizontal } from 'd3-shape';
+// Registers selection.transition(), used for all animated updates
+import 'd3-transition';
 
 const d3 = {
     selection,
@@ -20,6 +22,42 @@ const d3 = {
     flextree
 }
 
+// Escapes a value for safe interpolation into HTML / SVG markup.
+// Use it in custom nodeContent templates for any text that comes from data.
+export function escapeHtml(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// Turns an arbitrary value into a string that is safe to use as an element id / url(#...) reference
+function toSafeId(value) {
+    return String(value).replace(/[^a-zA-Z0-9_-]/g, ch => '_' + ch.charCodeAt(0).toString(16));
+}
+
+// Error thrown by API methods when the chart runs in strict mode
+export class OrgChartError extends Error {
+    constructor(code, message) {
+        super(message);
+        this.name = 'OrgChartError';
+        this.code = code;
+    }
+}
+
+export const ErrorCodes = {
+    NodeNotFound: 'NODE_NOT_FOUND',
+    NodeAlreadyExists: 'NODE_ALREADY_EXISTS',
+    ContainerNotFound: 'CONTAINER_NOT_FOUND',
+    NotRendered: 'NOT_RENDERED',
+};
+
+// Height used when neither svgHeight nor the container provide one
+const FALLBACK_HEIGHT = 600;
+
 export class OrgChart {
     constructor() {
 
@@ -32,16 +70,20 @@ export class OrgChart {
             firstDraw: true,    // Whether chart is drawn for the first time
             ctx: document.createElement('canvas').getContext('2d'),
             initialExpandLevel: 1,
-            nodeDefaultBackground: 'none',
+            nodeDefaultBackground: 'var(--oc-node-background, none)',
             lastTransform: { x: 0, y: 0, k: 1 },  // Panning and zooming values
             allowedNodesCount: {},
             zoomBehavior: null,
             generateRoot: null,
+            effectiveLayout: "top", // Layout actually drawn, after applying rtl (see resolveDirection)
+            rtlSign: 1, // -1 when the chart is mirrored for right-to-left
 
             /*  INTENDED FOR PUBLIC OVERRIDE */
 
-            svgWidth: 800,   // Configure svg width
-            svgHeight: window.innerHeight - 100,  // Configure svg height
+            svgWidth: null,   // Configure svg width, null = follow container width
+            svgHeight: null,  // Configure svg height, null = follow container height (falls back to 600px when the container has no height)
+            autoResize: true, // Resize the svg when the container size changes
+            strict: false, // When true, API methods throw OrgChartError instead of logging a warning (e.g. unknown node id)
             container: "body",  // Set parent container, either CSS style selector or DOM element
             data: null, // Set data, it must be an array of objects, where hierarchy is clearly defined via id and parent ID (property names are configurable)
             connections: [], // Sets connection data, array of objects, SAMPLE:  [{from:"145",to:"201",label:"Conflicts of interest"}]
@@ -68,13 +110,17 @@ export class OrgChart {
             imageName: 'Chart', // Configure exported PNG and SVG image name
             setActiveNodeCentered: true, // Configure if active node should be centered when expanded and collapsed
             layout: "top",// Configure layout direction , possible values are "top", "left", "right", "bottom"
+            rtl: "auto", // Right-to-left mirroring: true, false, or "auto" to follow the container's CSS direction. Mirrors siblings order, and swaps the "left" and "right" layouts
             compact: true, // Configure if compact mode is enabled , when enabled, nodes are shown in compact positions, instead of horizontal spread
             createZoom: d => d3.zoom(),
             onZoomStart: e => { }, // Callback for zoom & panning start
             onZoom: e => { }, // Callback for zoom & panning 
             onZoomEnd: e => { }, // Callback for zoom & panning end
-            onNodeClick: (d) => d, // Callback for node click
-            onExpandOrCollapse: (d) => d, // Callback for node expand or collapse
+            onNodeClick: (d, event) => d, // Callback for node click
+            onExpandOrCollapse: (d, expanded) => d, // Callback for node expand or collapse
+            ariaLabel: "Organization chart", // Accessible name of the chart (role="tree")
+            nodeAriaLabel: null, // Accessible name of a node, d => string. Defaults to the text content of the node
+            focusedNodeId: null, // Id of the node that receives keyboard focus (roving tabindex), defaults to the root
 
             /*
             * Node HTML content generation , remember that you can access some helper methods:
@@ -100,7 +146,7 @@ export class OrgChart {
             * d=>d._expanded - when node is expanded
             * d=>d.data._centered - when node is centered
             */
-            nodeContent: d => `<div style="padding:5px;font-size:10px;">Sample Node(id=${d.id}), override using <br/> 
+            nodeContent: d => `<div style="padding:5px;font-size:10px;">Sample Node(id=${escapeHtml(d.id)}), override using <br/> 
             <code>chart.nodeContent({data}=>{ <br/>
              &nbsp;&nbsp;&nbsp;&nbsp;return '' // Custom HTML <br/>
              })</code>
@@ -113,34 +159,34 @@ export class OrgChart {
                 const icons = {
                     "left": d => d ?
                         `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M14.283 3.50094L6.51 11.4749C6.37348 11.615 6.29707 11.8029 6.29707 11.9984C6.29707 12.194 6.37348 12.3819 6.51 12.5219L14.283 20.4989C14.3466 20.5643 14.4226 20.6162 14.5066 20.6516C14.5906 20.6871 14.6808 20.7053 14.772 20.7053C14.8632 20.7053 14.9534 20.6871 15.0374 20.6516C15.1214 20.6162 15.1974 20.5643 15.261 20.4989C15.3918 20.365 15.4651 20.1852 15.4651 19.9979C15.4651 19.8107 15.3918 19.6309 15.261 19.4969L7.9515 11.9984L15.261 4.50144C15.3914 4.36756 15.4643 4.18807 15.4643 4.00119C15.4643 3.81431 15.3914 3.63482 15.261 3.50094C15.1974 3.43563 15.1214 3.38371 15.0374 3.34827C14.9534 3.31282 14.8632 3.29456 14.772 3.29456C14.6808 3.29456 14.5906 3.31282 14.5066 3.34827C14.4226 3.38371 14.3466 3.43563 14.283 3.50094V3.50094Z" fill="#716E7B" stroke="#716E7B"/>
-                      </svg></span><span style="color:#716E7B">${node.data._directSubordinatesPaging} </span></div>` :
+                      <path d="M14.283 3.50094L6.51 11.4749C6.37348 11.615 6.29707 11.8029 6.29707 11.9984C6.29707 12.194 6.37348 12.3819 6.51 12.5219L14.283 20.4989C14.3466 20.5643 14.4226 20.6162 14.5066 20.6516C14.5906 20.6871 14.6808 20.7053 14.772 20.7053C14.8632 20.7053 14.9534 20.6871 15.0374 20.6516C15.1214 20.6162 15.1974 20.5643 15.261 20.4989C15.3918 20.365 15.4651 20.1852 15.4651 19.9979C15.4651 19.8107 15.3918 19.6309 15.261 19.4969L7.9515 11.9984L15.261 4.50144C15.3914 4.36756 15.4643 4.18807 15.4643 4.00119C15.4643 3.81431 15.3914 3.63482 15.261 3.50094C15.1974 3.43563 15.1214 3.38371 15.0374 3.34827C14.9534 3.31282 14.8632 3.29456 14.772 3.29456C14.6808 3.29456 14.5906 3.31282 14.5066 3.34827C14.4226 3.38371 14.3466 3.43563 14.283 3.50094V3.50094Z" fill="currentColor" stroke="currentColor"/>
+                      </svg></span><span>${node.data._directSubordinatesPaging} </span></div>` :
                         `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                          <path d="M7.989 3.49944C7.85817 3.63339 7.78492 3.8132 7.78492 4.00044C7.78492 4.18768 7.85817 4.36749 7.989 4.50144L15.2985 11.9999L7.989 19.4969C7.85817 19.6309 7.78492 19.8107 7.78492 19.9979C7.78492 20.1852 7.85817 20.365 7.989 20.4989C8.05259 20.5643 8.12863 20.6162 8.21261 20.6516C8.2966 20.6871 8.38684 20.7053 8.478 20.7053C8.56916 20.7053 8.6594 20.6871 8.74338 20.6516C8.82737 20.6162 8.90341 20.5643 8.967 20.4989L16.74 12.5234C16.8765 12.3834 16.9529 12.1955 16.9529 11.9999C16.9529 11.8044 16.8765 11.6165 16.74 11.4764L8.967 3.50094C8.90341 3.43563 8.82737 3.38371 8.74338 3.34827C8.6594 3.31282 8.56916 3.29456 8.478 3.29456C8.38684 3.29456 8.2966 3.31282 8.21261 3.34827C8.12863 3.38371 8.05259 3.43563 7.989 3.50094V3.49944Z" fill="#716E7B" stroke="#716E7B"/>
-                          </svg></span><span style="color:#716E7B">${node.data._directSubordinatesPaging} </span></div>`
+                          <path d="M7.989 3.49944C7.85817 3.63339 7.78492 3.8132 7.78492 4.00044C7.78492 4.18768 7.85817 4.36749 7.989 4.50144L15.2985 11.9999L7.989 19.4969C7.85817 19.6309 7.78492 19.8107 7.78492 19.9979C7.78492 20.1852 7.85817 20.365 7.989 20.4989C8.05259 20.5643 8.12863 20.6162 8.21261 20.6516C8.2966 20.6871 8.38684 20.7053 8.478 20.7053C8.56916 20.7053 8.6594 20.6871 8.74338 20.6516C8.82737 20.6162 8.90341 20.5643 8.967 20.4989L16.74 12.5234C16.8765 12.3834 16.9529 12.1955 16.9529 11.9999C16.9529 11.8044 16.8765 11.6165 16.74 11.4764L8.967 3.50094C8.90341 3.43563 8.82737 3.38371 8.74338 3.34827C8.6594 3.31282 8.56916 3.29456 8.478 3.29456C8.38684 3.29456 8.2966 3.31282 8.21261 3.34827C8.12863 3.38371 8.05259 3.43563 7.989 3.50094V3.49944Z" fill="currentColor" stroke="currentColor"/>
+                          </svg></span><span>${node.data._directSubordinatesPaging} </span></div>`
                     ,
                     "bottom": d => d ? `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                       <path d="M19.497 7.98903L12 15.297L4.503 7.98903C4.36905 7.85819 4.18924 7.78495 4.002 7.78495C3.81476 7.78495 3.63495 7.85819 3.501 7.98903C3.43614 8.05257 3.38462 8.12842 3.34944 8.21213C3.31427 8.29584 3.29615 8.38573 3.29615 8.47653C3.29615 8.56733 3.31427 8.65721 3.34944 8.74092C3.38462 8.82463 3.43614 8.90048 3.501 8.96403L11.4765 16.74C11.6166 16.8765 11.8044 16.953 12 16.953C12.1956 16.953 12.3834 16.8765 12.5235 16.74L20.499 8.96553C20.5643 8.90193 20.6162 8.8259 20.6517 8.74191C20.6871 8.65792 20.7054 8.56769 20.7054 8.47653C20.7054 8.38537 20.6871 8.29513 20.6517 8.21114C20.6162 8.12715 20.5643 8.05112 20.499 7.98753C20.3651 7.85669 20.1852 7.78345 19.998 7.78345C19.8108 7.78345 19.6309 7.85669 19.497 7.98753V7.98903Z" fill="#716E7B" stroke="#716E7B"/>
-                       </svg></span><span style="margin-left:1px;color:#716E7B" >${node.data._directSubordinatesPaging} </span></div>
+                       <path d="M19.497 7.98903L12 15.297L4.503 7.98903C4.36905 7.85819 4.18924 7.78495 4.002 7.78495C3.81476 7.78495 3.63495 7.85819 3.501 7.98903C3.43614 8.05257 3.38462 8.12842 3.34944 8.21213C3.31427 8.29584 3.29615 8.38573 3.29615 8.47653C3.29615 8.56733 3.31427 8.65721 3.34944 8.74092C3.38462 8.82463 3.43614 8.90048 3.501 8.96403L11.4765 16.74C11.6166 16.8765 11.8044 16.953 12 16.953C12.1956 16.953 12.3834 16.8765 12.5235 16.74L20.499 8.96553C20.5643 8.90193 20.6162 8.8259 20.6517 8.74191C20.6871 8.65792 20.7054 8.56769 20.7054 8.47653C20.7054 8.38537 20.6871 8.29513 20.6517 8.21114C20.6162 8.12715 20.5643 8.05112 20.499 7.98753C20.3651 7.85669 20.1852 7.78345 19.998 7.78345C19.8108 7.78345 19.6309 7.85669 19.497 7.98753V7.98903Z" fill="currentColor" stroke="currentColor"/>
+                       </svg></span><span style="margin-left:1px">${node.data._directSubordinatesPaging} </span></div>
                        ` : `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                       <path d="M11.457 8.07005L3.49199 16.4296C3.35903 16.569 3.28485 16.7543 3.28485 16.9471C3.28485 17.1398 3.35903 17.3251 3.49199 17.4646L3.50099 17.4736C3.56545 17.5414 3.64304 17.5954 3.72904 17.6324C3.81504 17.6693 3.90765 17.6883 4.00124 17.6883C4.09483 17.6883 4.18745 17.6693 4.27344 17.6324C4.35944 17.5954 4.43703 17.5414 4.50149 17.4736L12.0015 9.60155L19.4985 17.4736C19.563 17.5414 19.6405 17.5954 19.7265 17.6324C19.8125 17.6693 19.9052 17.6883 19.9987 17.6883C20.0923 17.6883 20.1849 17.6693 20.2709 17.6324C20.3569 17.5954 20.4345 17.5414 20.499 17.4736L20.508 17.4646C20.641 17.3251 20.7151 17.1398 20.7151 16.9471C20.7151 16.7543 20.641 16.569 20.508 16.4296L12.543 8.07005C12.4729 7.99653 12.3887 7.93801 12.2954 7.89801C12.202 7.85802 12.1015 7.8374 12 7.8374C11.8984 7.8374 11.798 7.85802 11.7046 7.89801C11.6113 7.93801 11.527 7.99653 11.457 8.07005Z" fill="#716E7B" stroke="#716E7B"/>
-                       </svg></span><span style="margin-left:1px;color:#716E7B" >${node.data._directSubordinatesPaging} </span></div>
+                       <path d="M11.457 8.07005L3.49199 16.4296C3.35903 16.569 3.28485 16.7543 3.28485 16.9471C3.28485 17.1398 3.35903 17.3251 3.49199 17.4646L3.50099 17.4736C3.56545 17.5414 3.64304 17.5954 3.72904 17.6324C3.81504 17.6693 3.90765 17.6883 4.00124 17.6883C4.09483 17.6883 4.18745 17.6693 4.27344 17.6324C4.35944 17.5954 4.43703 17.5414 4.50149 17.4736L12.0015 9.60155L19.4985 17.4736C19.563 17.5414 19.6405 17.5954 19.7265 17.6324C19.8125 17.6693 19.9052 17.6883 19.9987 17.6883C20.0923 17.6883 20.1849 17.6693 20.2709 17.6324C20.3569 17.5954 20.4345 17.5414 20.499 17.4736L20.508 17.4646C20.641 17.3251 20.7151 17.1398 20.7151 16.9471C20.7151 16.7543 20.641 16.569 20.508 16.4296L12.543 8.07005C12.4729 7.99653 12.3887 7.93801 12.2954 7.89801C12.202 7.85802 12.1015 7.8374 12 7.8374C11.8984 7.8374 11.798 7.85802 11.7046 7.89801C11.6113 7.93801 11.527 7.99653 11.457 8.07005Z" fill="currentColor" stroke="currentColor"/>
+                       </svg></span><span style="margin-left:1px">${node.data._directSubordinatesPaging} </span></div>
                     `,
                     "right": d => d ? `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                       <path d="M7.989 3.49944C7.85817 3.63339 7.78492 3.8132 7.78492 4.00044C7.78492 4.18768 7.85817 4.36749 7.989 4.50144L15.2985 11.9999L7.989 19.4969C7.85817 19.6309 7.78492 19.8107 7.78492 19.9979C7.78492 20.1852 7.85817 20.365 7.989 20.4989C8.05259 20.5643 8.12863 20.6162 8.21261 20.6516C8.2966 20.6871 8.38684 20.7053 8.478 20.7053C8.56916 20.7053 8.6594 20.6871 8.74338 20.6516C8.82737 20.6162 8.90341 20.5643 8.967 20.4989L16.74 12.5234C16.8765 12.3834 16.9529 12.1955 16.9529 11.9999C16.9529 11.8044 16.8765 11.6165 16.74 11.4764L8.967 3.50094C8.90341 3.43563 8.82737 3.38371 8.74338 3.34827C8.6594 3.31282 8.56916 3.29456 8.478 3.29456C8.38684 3.29456 8.2966 3.31282 8.21261 3.34827C8.12863 3.38371 8.05259 3.43563 7.989 3.50094V3.49944Z" fill="#716E7B" stroke="#716E7B"/>
-                       </svg></span><span style="color:#716E7B">${node.data._directSubordinatesPaging} </span></div>` :
+                       <path d="M7.989 3.49944C7.85817 3.63339 7.78492 3.8132 7.78492 4.00044C7.78492 4.18768 7.85817 4.36749 7.989 4.50144L15.2985 11.9999L7.989 19.4969C7.85817 19.6309 7.78492 19.8107 7.78492 19.9979C7.78492 20.1852 7.85817 20.365 7.989 20.4989C8.05259 20.5643 8.12863 20.6162 8.21261 20.6516C8.2966 20.6871 8.38684 20.7053 8.478 20.7053C8.56916 20.7053 8.6594 20.6871 8.74338 20.6516C8.82737 20.6162 8.90341 20.5643 8.967 20.4989L16.74 12.5234C16.8765 12.3834 16.9529 12.1955 16.9529 11.9999C16.9529 11.8044 16.8765 11.6165 16.74 11.4764L8.967 3.50094C8.90341 3.43563 8.82737 3.38371 8.74338 3.34827C8.6594 3.31282 8.56916 3.29456 8.478 3.29456C8.38684 3.29456 8.2966 3.31282 8.21261 3.34827C8.12863 3.38371 8.05259 3.43563 7.989 3.50094V3.49944Z" fill="currentColor" stroke="currentColor"/>
+                       </svg></span><span>${node.data._directSubordinatesPaging} </span></div>` :
                         `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                       <path d="M14.283 3.50094L6.51 11.4749C6.37348 11.615 6.29707 11.8029 6.29707 11.9984C6.29707 12.194 6.37348 12.3819 6.51 12.5219L14.283 20.4989C14.3466 20.5643 14.4226 20.6162 14.5066 20.6516C14.5906 20.6871 14.6808 20.7053 14.772 20.7053C14.8632 20.7053 14.9534 20.6871 15.0374 20.6516C15.1214 20.6162 15.1974 20.5643 15.261 20.4989C15.3918 20.365 15.4651 20.1852 15.4651 19.9979C15.4651 19.8107 15.3918 19.6309 15.261 19.4969L7.9515 11.9984L15.261 4.50144C15.3914 4.36756 15.4643 4.18807 15.4643 4.00119C15.4643 3.81431 15.3914 3.63482 15.261 3.50094C15.1974 3.43563 15.1214 3.38371 15.0374 3.34827C14.9534 3.31282 14.8632 3.29456 14.772 3.29456C14.6808 3.29456 14.5906 3.31282 14.5066 3.34827C14.4226 3.38371 14.3466 3.43563 14.283 3.50094V3.50094Z" fill="#716E7B" stroke="#716E7B"/>
-                       </svg></span><span style="color:#716E7B">${node.data._directSubordinatesPaging} </span></div>`,
+                       <path d="M14.283 3.50094L6.51 11.4749C6.37348 11.615 6.29707 11.8029 6.29707 11.9984C6.29707 12.194 6.37348 12.3819 6.51 12.5219L14.283 20.4989C14.3466 20.5643 14.4226 20.6162 14.5066 20.6516C14.5906 20.6871 14.6808 20.7053 14.772 20.7053C14.8632 20.7053 14.9534 20.6871 15.0374 20.6516C15.1214 20.6162 15.1974 20.5643 15.261 20.4989C15.3918 20.365 15.4651 20.1852 15.4651 19.9979C15.4651 19.8107 15.3918 19.6309 15.261 19.4969L7.9515 11.9984L15.261 4.50144C15.3914 4.36756 15.4643 4.18807 15.4643 4.00119C15.4643 3.81431 15.3914 3.63482 15.261 3.50094C15.1974 3.43563 15.1214 3.38371 15.0374 3.34827C14.9534 3.31282 14.8632 3.29456 14.772 3.29456C14.6808 3.29456 14.5906 3.31282 14.5066 3.34827C14.4226 3.38371 14.3466 3.43563 14.283 3.50094V3.50094Z" fill="currentColor" stroke="currentColor"/>
+                       </svg></span><span>${node.data._directSubordinatesPaging} </span></div>`,
                     "top": d => d ? `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M11.457 8.07005L3.49199 16.4296C3.35903 16.569 3.28485 16.7543 3.28485 16.9471C3.28485 17.1398 3.35903 17.3251 3.49199 17.4646L3.50099 17.4736C3.56545 17.5414 3.64304 17.5954 3.72904 17.6324C3.81504 17.6693 3.90765 17.6883 4.00124 17.6883C4.09483 17.6883 4.18745 17.6693 4.27344 17.6324C4.35944 17.5954 4.43703 17.5414 4.50149 17.4736L12.0015 9.60155L19.4985 17.4736C19.563 17.5414 19.6405 17.5954 19.7265 17.6324C19.8125 17.6693 19.9052 17.6883 19.9987 17.6883C20.0923 17.6883 20.1849 17.6693 20.2709 17.6324C20.3569 17.5954 20.4345 17.5414 20.499 17.4736L20.508 17.4646C20.641 17.3251 20.7151 17.1398 20.7151 16.9471C20.7151 16.7543 20.641 16.569 20.508 16.4296L12.543 8.07005C12.4729 7.99653 12.3887 7.93801 12.2954 7.89801C12.202 7.85802 12.1015 7.8374 12 7.8374C11.8984 7.8374 11.798 7.85802 11.7046 7.89801C11.6113 7.93801 11.527 7.99653 11.457 8.07005Z" fill="#716E7B" stroke="#716E7B"/>
-                        </svg></span><span style="margin-left:1px;color:#716E7B">${node.data._directSubordinatesPaging} </span></div>
+                        <path d="M11.457 8.07005L3.49199 16.4296C3.35903 16.569 3.28485 16.7543 3.28485 16.9471C3.28485 17.1398 3.35903 17.3251 3.49199 17.4646L3.50099 17.4736C3.56545 17.5414 3.64304 17.5954 3.72904 17.6324C3.81504 17.6693 3.90765 17.6883 4.00124 17.6883C4.09483 17.6883 4.18745 17.6693 4.27344 17.6324C4.35944 17.5954 4.43703 17.5414 4.50149 17.4736L12.0015 9.60155L19.4985 17.4736C19.563 17.5414 19.6405 17.5954 19.7265 17.6324C19.8125 17.6693 19.9052 17.6883 19.9987 17.6883C20.0923 17.6883 20.1849 17.6693 20.2709 17.6324C20.3569 17.5954 20.4345 17.5414 20.499 17.4736L20.508 17.4646C20.641 17.3251 20.7151 17.1398 20.7151 16.9471C20.7151 16.7543 20.641 16.569 20.508 16.4296L12.543 8.07005C12.4729 7.99653 12.3887 7.93801 12.2954 7.89801C12.202 7.85802 12.1015 7.8374 12 7.8374C11.8984 7.8374 11.798 7.85802 11.7046 7.89801C11.6113 7.93801 11.527 7.99653 11.457 8.07005Z" fill="currentColor" stroke="currentColor"/>
+                        </svg></span><span style="margin-left:1px">${node.data._directSubordinatesPaging} </span></div>
                         ` : `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M19.497 7.98903L12 15.297L4.503 7.98903C4.36905 7.85819 4.18924 7.78495 4.002 7.78495C3.81476 7.78495 3.63495 7.85819 3.501 7.98903C3.43614 8.05257 3.38462 8.12842 3.34944 8.21213C3.31427 8.29584 3.29615 8.38573 3.29615 8.47653C3.29615 8.56733 3.31427 8.65721 3.34944 8.74092C3.38462 8.82463 3.43614 8.90048 3.501 8.96403L11.4765 16.74C11.6166 16.8765 11.8044 16.953 12 16.953C12.1956 16.953 12.3834 16.8765 12.5235 16.74L20.499 8.96553C20.5643 8.90193 20.6162 8.8259 20.6517 8.74191C20.6871 8.65792 20.7054 8.56769 20.7054 8.47653C20.7054 8.38537 20.6871 8.29513 20.6517 8.21114C20.6162 8.12715 20.5643 8.05112 20.499 7.98753C20.3651 7.85669 20.1852 7.78345 19.998 7.78345C19.8108 7.78345 19.6309 7.85669 19.497 7.98753V7.98903Z" fill="#716E7B" stroke="#716E7B"/>
-                        </svg></span><span style="margin-left:1px;color:#716E7B">${node.data._directSubordinatesPaging} </span></div>
+                        <path d="M19.497 7.98903L12 15.297L4.503 7.98903C4.36905 7.85819 4.18924 7.78495 4.002 7.78495C3.81476 7.78495 3.63495 7.85819 3.501 7.98903C3.43614 8.05257 3.38462 8.12842 3.34944 8.21213C3.31427 8.29584 3.29615 8.38573 3.29615 8.47653C3.29615 8.56733 3.31427 8.65721 3.34944 8.74092C3.38462 8.82463 3.43614 8.90048 3.501 8.96403L11.4765 16.74C11.6166 16.8765 11.8044 16.953 12 16.953C12.1956 16.953 12.3834 16.8765 12.5235 16.74L20.499 8.96553C20.5643 8.90193 20.6162 8.8259 20.6517 8.74191C20.6871 8.65792 20.7054 8.56769 20.7054 8.47653C20.7054 8.38537 20.6871 8.29513 20.6517 8.21114C20.6162 8.12715 20.5643 8.05112 20.499 7.98753C20.3651 7.85669 20.1852 7.78345 19.998 7.78345C19.8108 7.78345 19.6309 7.85669 19.497 7.98753V7.98903Z" fill="currentColor" stroke="currentColor"/>
+                        </svg></span><span style="margin-left:1px">${node.data._directSubordinatesPaging} </span></div>
                     `,
                 }
-                return `<div style="border:1px solid #E4E2E9;border-radius:3px;padding:3px;font-size:9px;margin:auto auto;background-color:white"> ${icons[state.layout](node.children)}  </div>`
+                return `<div style="border:1px solid var(--oc-button-border-color, #E4E2E9);border-radius:3px;padding:3px;font-size:9px;margin:auto auto;background-color:var(--oc-button-background, white);color:var(--oc-button-color, #716E7B)"> ${icons[state.effectiveLayout || state.layout](node.children)}  </div>`
             },
             /* Node paging button content and styling. You can access same helper methods as above. */
             pagingButton: (d, i, arr, state) => {
@@ -150,9 +196,9 @@ export class OrgChart {
                 const min = Math.min(diff, step);
                 return `
                    <div style="margin-top:90px;">
-                      <div style="display:flex;width:170px;border-radius:20px;padding:5px 15px; padding-bottom:4px;;background-color:#E5E9F2">
+                      <div style="display:flex;width:170px;border-radius:20px;padding:5px 15px; padding-bottom:4px;background-color:var(--oc-paging-background, #E5E9F2);color:var(--oc-paging-color, #716E7B)">
                       <div><svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M5.59 7.41L10.18 12L5.59 16.59L7 18L13 12L7 6L5.59 7.41ZM16 6H18V18H16V6Z" fill="#716E7B" stroke="#716E7B"/>
+                      <path d="M5.59 7.41L10.18 12L5.59 16.59L7 18L13 12L7 6L5.59 7.41ZM16 6H18V18H16V6Z" fill="currentColor" stroke="currentColor"/>
                       </svg>
                       </div><div style="line-height:2"> Show next ${min}  nodes </div></div>
                    </div>
@@ -162,7 +208,7 @@ export class OrgChart {
             nodeUpdate: function (d, i, arr) {
                 d3.select(this)
                     .select('.node-rect')
-                    .attr("stroke", d => d.data._highlighted || d.data._upToTheRootHighlighted ? '#E27396' : 'none')
+                    .style("stroke", d => d.data._highlighted || d.data._upToTheRootHighlighted ? 'var(--oc-highlight-color, #E27396)' : 'none')
                     .attr("stroke-width", d.data._highlighted || d.data._upToTheRootHighlighted ? 10 : 1)
             },
             nodeEnter: (d) => d, // Custom handling of node update
@@ -170,7 +216,7 @@ export class OrgChart {
             /* You can access and modify actual link DOM element in runtime using this method. */
             linkUpdate: function (d, i, arr) {
                 d3.select(this)
-                    .attr("stroke", d => d.data._upToTheRootHighlighted ? '#E27396' : '#E4E2E9')
+                    .style("stroke", d => d.data._upToTheRootHighlighted ? 'var(--oc-highlight-color, #E27396)' : 'var(--oc-link-color, #E4E2E9)')
                     .attr("stroke-width", d => d.data._upToTheRootHighlighted ? 5 : 1)
 
                 if (d.data._upToTheRootHighlighted) {
@@ -266,13 +312,13 @@ export class OrgChart {
                     ${visibleConnections.map(conn => {
                     const labelWidth = this.getTextWidth(conn.label, { ctx: state.ctx, fontSize: 2, defaultFont: state.defaultFont });
                     return `
-                       <marker id="${conn.from + "_" + conn.to}" refX="${conn._source.x < conn._target.x ? -7 : 7}" refY="5" markerWidth="500"  markerHeight="500"  orient="${conn._source.x < conn._target.x ? "auto" : "auto-start-reverse"}" >
-                       <rect rx=0.5 width=${conn.label ? labelWidth + 3 : 0} height=3 y=1  fill="#E27396"></rect>
-                       <text font-size="2px" x=1 fill="white" y=3>${conn.label || ''}</text>
+                       <marker id="${toSafeId(conn.from + "_" + conn.to)}" refX="${conn._source.x < conn._target.x ? -7 : 7}" refY="5" markerWidth="500"  markerHeight="500"  orient="${conn._source.x < conn._target.x ? "auto" : "auto-start-reverse"}" >
+                       <rect rx=0.5 width=${conn.label ? labelWidth + 3 : 0} height=3 y=1 style="fill:var(--oc-connection-color, #E27396)"></rect>
+                       <text font-size="2px" x=1 y=3 style="fill:var(--oc-connection-label-color, white)">${escapeHtml(conn.label || '')}</text>
                        </marker>
 
-                       <marker id="arrow-${conn.from + "_" + conn.to}"  markerWidth="500"  markerHeight="500"  refY="2"  refX="1" orient="${conn._source.x < conn._target.x ? "auto" : "auto-start-reverse"}" >
-                       <path transform="translate(0)" d='M0,0 V4 L2,2 Z' fill='#E27396' />
+                       <marker id="arrow-${toSafeId(conn.from + "_" + conn.to)}"  markerWidth="500"  markerHeight="500"  refY="2"  refX="1" orient="${conn._source.x < conn._target.x ? "auto" : "auto-start-reverse"}" >
+                       <path transform="translate(0)" d='M0,0 V4 L2,2 Z' style="fill:var(--oc-connection-color, #E27396)" />
                        </marker>
                     `}).join("")}
                     </defs>
@@ -280,12 +326,12 @@ export class OrgChart {
             /* You can update connections with custom styling using this function */
             connectionsUpdate: function (d, i, arr) {
                 d3.select(this)
-                    .attr("stroke", d => '#E27396')
+                    .style("stroke", 'var(--oc-connection-color, #E27396)')
                     .attr('stroke-linecap', 'round')
                     .attr("stroke-width", d => '5')
                     .attr('pointer-events', 'none')
-                    .attr("marker-start", d => `url(#${d.from + "_" + d.to})`)
-                    .attr("marker-end", d => `url(#arrow-${d.from + "_" + d.to})`)
+                    .attr("marker-start", d => `url(#${toSafeId(d.from + "_" + d.to)})`)
+                    .attr("marker-end", d => `url(#arrow-${toSafeId(d.from + "_" + d.to)})`)
             },
             // Link generator for connections
             linkGroupArc: d3.linkHorizontal().x(d => d.x).y(d => d.y),
@@ -346,9 +392,9 @@ export class OrgChart {
                     "nodeJoinY": node => node.y + node.height,
                     "linkJoinX": node => node.x,
                     "linkJoinY": node => node.y + node.height,
-                    "linkCompactXStart": node => node.x + (node.compactEven ? node.width / 2 : -node.width / 2),
+                    "linkCompactXStart": node => node.x + attrs.rtlSign * (node.compactEven ? node.width / 2 : -node.width / 2),
                     "linkCompactYStart": node => node.y + node.height / 2,
-                    "compactLinkMidX": (node, state) => node.firstCompactNode.x + node.firstCompactNode.flexCompactDim[0] / 4 + state.compactMarginPair(node) / 4,
+                    "compactLinkMidX": (node, state) => node.firstCompactNode.x + attrs.rtlSign * (node.firstCompactNode.flexCompactDim[0] / 4 + state.compactMarginPair(node) / 4),
                     "compactLinkMidY": node => node.firstCompactNode.y,
                     "compactDimension": {
                         sizeColumn: node => node.width,
@@ -369,7 +415,7 @@ export class OrgChart {
                         };
                         return [width + siblingsMargin, height + childrenMargin];
                     },
-                    "zoomTransform": ({ centerX, scale }) => `translate(${centerX},0}) scale(${scale})`,
+                    "zoomTransform": ({ centerX, scale }) => `translate(${centerX},0) scale(${scale})`,
                     "diagonal": this.diagonal.bind(this),
                     "swap": d => { },
                     "nodeUpdateTransform": ({ x, y, width, height }) => `translate(${x - width / 2},${y})`,
@@ -384,9 +430,9 @@ export class OrgChart {
                     "nodeJoinY": node => node.y - node.height - node.height,
                     "linkJoinX": node => node.x,
                     "linkJoinY": node => node.y - node.height,
-                    "linkCompactXStart": node => node.x + (node.compactEven ? node.width / 2 : -node.width / 2),
+                    "linkCompactXStart": node => node.x + attrs.rtlSign * (node.compactEven ? node.width / 2 : -node.width / 2),
                     "linkCompactYStart": node => node.y - node.height / 2,
-                    "compactLinkMidX": (node, state) => node.firstCompactNode.x + node.firstCompactNode.flexCompactDim[0] / 4 + state.compactMarginPair(node) / 4,
+                    "compactLinkMidX": (node, state) => node.firstCompactNode.x + attrs.rtlSign * (node.firstCompactNode.flexCompactDim[0] / 4 + state.compactMarginPair(node) / 4),
                     "compactLinkMidY": node => node.firstCompactNode.y,
                     "linkX": node => node.x,
                     "linkY": node => node.y,
@@ -407,7 +453,7 @@ export class OrgChart {
                         };
                         return [width + siblingsMargin, height + childrenMargin]
                     },
-                    "zoomTransform": ({ centerX, scale }) => `translate(${centerX},0}) scale(${scale})`,
+                    "zoomTransform": ({ centerX, scale }) => `translate(${centerX},0) scale(${scale})`,
                     "diagonal": this.diagonal.bind(this),
                     "swap": d => { d.y = -d.y; },
                     "nodeUpdateTransform": ({ x, y, width, height }) => `translate(${x - width / 2},${y - height})`,
@@ -522,29 +568,95 @@ export class OrgChart {
         return this;
     }
 
+    // Reports an API misuse: throws in strict mode, warns otherwise
+    handleError(code, message) {
+        const attrs = this.getChartState();
+        if (attrs.strict) {
+            throw new OrgChartError(code, message);
+        }
+        console.warn(`ORG CHART - ${message}`);
+    }
+
+    // Resolves rtl and the layout that is actually drawn: in right-to-left, "left" and "right" swap
+    // and top / bottom layouts are mirrored horizontally
+    resolveDirection() {
+        const attrs = this.getChartState();
+        let rtl = attrs.rtl;
+        if (rtl === "auto") {
+            const node = d3.select(attrs.container).node();
+            rtl = !!node && getComputedStyle(node).direction === "rtl";
+        }
+        attrs.isRtl = !!rtl;
+        attrs.effectiveLayout = attrs.isRtl
+            ? ({ left: "right", right: "left" }[attrs.layout] || attrs.layout)
+            : attrs.layout;
+        attrs.rtlSign = attrs.isRtl && (attrs.layout === "top" || attrs.layout === "bottom") ? -1 : 1;
+        return this;
+    }
+
+    // Returns false (and reports it) when an action needs a rendered chart but render() has not run yet
+    isRendered(action) {
+        if (this.getChartState().svg) return true;
+        this.handleError(ErrorCodes.NotRendered, `${action} - Chart is not rendered yet, call render() first`);
+        return false;
+    }
+
+    // Resolves the configured container to a DOM element
+    getContainerNode() {
+        const attrs = this.getChartState();
+        const node = d3.select(attrs.container).node();
+        if (!node) {
+            throw new OrgChartError(ErrorCodes.ContainerNotFound, `Container "${attrs.container}" not found`);
+        }
+        return node;
+    }
+
+    // Returns the svg size: explicit svgWidth / svgHeight win, otherwise the container size is used
+    getChartSize() {
+        const attrs = this.getChartState();
+        const rect = this.getContainerNode().getBoundingClientRect();
+        const width = attrs.svgWidth || (rect.width > 0 ? rect.width : 800);
+        const height = attrs.svgHeight || (rect.height > 0 ? rect.height : FALLBACK_HEIGHT);
+        return { width, height };
+    }
+
+    // Applies the current container size to the svg (invoked by the ResizeObserver)
+    resize() {
+        const attrs = this.getChartState();
+        if (!attrs.svg || !attrs.calc) return this;
+        const { width, height } = this.getChartSize();
+        if (width === attrs.calc.chartWidth && height === attrs.calc.chartHeight) return this;
+        attrs.calc.chartWidth = width;
+        attrs.calc.chartHeight = height;
+        attrs.calc.centerX = width / 2;
+        attrs.calc.centerY = height / 2;
+        attrs.svg.attr('width', width).attr('height', height);
+        return this;
+    }
+
     render() {
         //InnerFunctions which will update visuals
         const attrs = this.getChartState();
         if (!attrs.data || attrs.data.length == 0) {
-            console.log('ORG CHART - Data is empty');
-            if (attrs.container) {
-                select(attrs.container).select('.nodes-wrapper').remove();
-                select(attrs.container).select('.links-wrapper').remove();
-                select(attrs.container).select('.connections-wrapper').remove();
+            const containerNode = d3.select(attrs.container).node();
+            if (containerNode) {
+                select(containerNode).select('.nodes-wrapper').remove();
+                select(containerNode).select('.links-wrapper').remove();
+                select(containerNode).select('.connections-wrapper').remove();
             }
             return this;
         }
 
         //Drawing containers
-        const container = d3.select(attrs.container);
-        const containerRect = container.node().getBoundingClientRect();
-        if (containerRect.width > 0) attrs.svgWidth = containerRect.width;
+        const container = d3.select(this.getContainerNode());
+        this.resolveDirection();
+        const { width: chartWidth, height: chartHeight } = this.getChartSize();
 
         //Calculated properties
         const calc = {
             id: `ID${Math.floor(Math.random() * 1000000)}`, // id for event handlings,
-            chartWidth: attrs.svgWidth,
-            chartHeight: attrs.svgHeight
+            chartWidth,
+            chartHeight
         };
         attrs.calc = calc;
 
@@ -579,7 +691,7 @@ export class OrgChart {
                 const height = attrs.nodeHeight(node);
                 const siblingsMargin = attrs.siblingsMargin(node)
                 const childrenMargin = attrs.childrenMargin(node);
-                return attrs.layoutBindings[attrs.layout].nodeFlexSize({
+                return attrs.layoutBindings[attrs.effectiveLayout].nodeFlexSize({
                     state: attrs,
                     node: node,
                     width,
@@ -600,9 +712,11 @@ export class OrgChart {
                 tag: "svg",
                 selector: "svg-chart-container"
             })
-            .attr("width", attrs.svgWidth)
-            .attr("height", attrs.svgHeight)
-            .attr("font-family", attrs.defaultFont)
+            .attr("width", calc.chartWidth)
+            .attr("height", calc.chartHeight)
+            .style("font-family", `var(--oc-font-family, ${attrs.defaultFont})`)
+            // Block display avoids the inline baseline gap, which would make an auto-height container grow on every resize
+            .style("display", "block")
 
         if (attrs.firstDraw) {
             svg.call(attrs.zoomBehavior)
@@ -630,16 +744,33 @@ export class OrgChart {
             tag: "g",
             selector: "links-wrapper"
         })
+            .attr("aria-hidden", "true")
 
         attrs.nodesWrapper = attrs.centerG.patternify({
             tag: "g",
             selector: "nodes-wrapper"
         })
+            .attr("role", "tree")
+            .attr("aria-label", attrs.ariaLabel)
 
         attrs.connectionsWrapper = attrs.centerG.patternify({
             tag: "g",
             selector: "connections-wrapper"
         })
+            .attr("aria-hidden", "true")
+
+        // Focus ring for keyboard navigation. Inline styles set by nodeUpdate win over plain rules, hence !important
+        svg.patternify({
+            tag: "style",
+            selector: "org-chart-styles"
+        })
+            .text(`
+                .svg-chart-container g.node:focus { outline: none; }
+                .svg-chart-container g.node:focus-visible > .node-rect {
+                    stroke: var(--oc-focus-color, #1068EB) !important;
+                    stroke-width: 3px !important;
+                }
+            `)
 
         attrs.defsWrapper = svg.patternify({
             tag: "g",
@@ -648,7 +779,7 @@ export class OrgChart {
 
         if (attrs.firstDraw) {
             attrs.centerG.attr("transform", () => {
-                return attrs.layoutBindings[attrs.layout].centerTransform({
+                return attrs.layoutBindings[attrs.effectiveLayout].centerTransform({
                     centerX: calc.centerX,
                     centerY: calc.centerY,
                     scale: attrs.lastTransform.k,
@@ -669,10 +800,14 @@ export class OrgChart {
         //#########################################  UTIL FUNCS ##################################
         // This function restyles foreign object elements ()
 
-        d3.select(window).on(`resize.${attrs.id}`, () => {
-            const containerRect = d3.select(attrs.container).node().getBoundingClientRect();
-            attrs.svg.attr('width', containerRect.width)
-        });
+        if (attrs.resizeObserver) {
+            attrs.resizeObserver.disconnect();
+            attrs.resizeObserver = null;
+        }
+        if (attrs.autoResize && typeof ResizeObserver !== 'undefined') {
+            attrs.resizeObserver = new ResizeObserver(() => this.resize());
+            attrs.resizeObserver.observe(container.node());
+        }
 
         if (attrs.firstDraw) {
             attrs.firstDraw = false;
@@ -694,7 +829,7 @@ export class OrgChart {
         const nodeFound = descendants.filter(({ data }) => attrs.nodeId(data).toString() === attrs.nodeId(obj).toString())[0];
         const parentFound = descendants.filter(({ data }) => attrs.nodeId(data).toString() === attrs.parentNodeId(obj).toString())[0];
         if (nodeFound) {
-            console.log(`ORG CHART - ADD - Node with id "${attrs.nodeId(obj)}" already exists in tree`)
+            this.handleError(ErrorCodes.NodeAlreadyExists, `ADD - Node with id "${attrs.nodeId(obj)}" already exists in tree`);
             return this;
         }
 
@@ -715,7 +850,7 @@ export class OrgChart {
         const node = descendants.filter(({ data }) => attrs.nodeId(data) == nodeId)[0];
 
         if (!node) {
-            console.log(`ORG CHART - REMOVE - Node with id "${nodeId}" not found in the tree`);
+            this.handleError(ErrorCodes.NodeNotFound, `REMOVE - Node with id "${nodeId}" not found in the tree`);
             return this;
         }
 
@@ -774,10 +909,10 @@ export class OrgChart {
                     else child.compactEven = true;
                     child.row = Math.floor(i / 2);
                 })
-                const evenMaxColumnDimension = d3.max(compactChildren.filter(d => d.compactEven), attrs.layoutBindings[attrs.layout].compactDimension.sizeColumn);
-                const oddMaxColumnDimension = d3.max(compactChildren.filter(d => !d.compactEven), attrs.layoutBindings[attrs.layout].compactDimension.sizeColumn);
+                const evenMaxColumnDimension = d3.max(compactChildren.filter(d => d.compactEven), attrs.layoutBindings[attrs.effectiveLayout].compactDimension.sizeColumn);
+                const oddMaxColumnDimension = d3.max(compactChildren.filter(d => !d.compactEven), attrs.layoutBindings[attrs.effectiveLayout].compactDimension.sizeColumn);
                 const columnSize = Math.max(evenMaxColumnDimension, oddMaxColumnDimension) * 2;
-                const rowsMapNew = this.groupBy(compactChildren, d => d.row, reducedGroup => d3.max(reducedGroup, d => attrs.layoutBindings[attrs.layout].compactDimension.sizeRow(d) + attrs.compactMarginBetween(d)));
+                const rowsMapNew = this.groupBy(compactChildren, d => d.row, reducedGroup => d3.max(reducedGroup, d => attrs.layoutBindings[attrs.effectiveLayout].compactDimension.sizeRow(d) + attrs.compactMarginBetween(d)));
                 const rowSize = d3.sum(rowsMapNew.map(v => v[1]))
                 compactChildren.forEach(node => {
                     node.firstCompactNode = compactChildren[0];
@@ -814,7 +949,7 @@ export class OrgChart {
                     compactChildren.forEach(d => d.x += offsetX);
                 }
 
-                const rowsMapNew = this.groupBy(compactChildren, d => d.row, reducedGroup => d3.max(reducedGroup, d => attrs.layoutBindings[attrs.layout].compactDimension.sizeRow(d)));
+                const rowsMapNew = this.groupBy(compactChildren, d => d.row, reducedGroup => d3.max(reducedGroup, d => attrs.layoutBindings[attrs.effectiveLayout].compactDimension.sizeRow(d)));
                 const cumSum = d3.cumsum(rowsMapNew.map(d => d[1] + attrs.compactMarginBetween(d)));
                 compactChildren
                     .forEach((node, i) => {
@@ -833,6 +968,7 @@ export class OrgChart {
     update({ x0, y0, x = 0, y = 0, width, height }) {
         const attrs = this.getChartState();
         const calc = attrs.calc;
+        this.resolveDirection();
 
         // Paging
         if (attrs.compact) {
@@ -853,7 +989,10 @@ export class OrgChart {
 
         // Get all links
         const links = treeData.descendants().slice(1);
-        nodes.forEach(attrs.layoutBindings[attrs.layout].swap)
+        nodes.forEach(attrs.layoutBindings[attrs.effectiveLayout].swap)
+        if (attrs.rtlSign === -1) {
+            nodes.forEach(d => { d.x = -d.x; });
+        }
 
         // Connections
         const connections = attrs.connections;
@@ -888,10 +1027,10 @@ export class OrgChart {
             .insert("path", "g")
             .attr("class", "link")
             .attr("d", (d) => {
-                const xo = attrs.layoutBindings[attrs.layout].linkJoinX({ x: x0, y: y0, width, height });
-                const yo = attrs.layoutBindings[attrs.layout].linkJoinY({ x: x0, y: y0, width, height });
+                const xo = attrs.layoutBindings[attrs.effectiveLayout].linkJoinX({ x: x0, y: y0, width, height });
+                const yo = attrs.layoutBindings[attrs.effectiveLayout].linkJoinY({ x: x0, y: y0, width, height });
                 const o = { x: xo, y: yo };
-                return attrs.layoutBindings[attrs.layout].diagonal(o, o, o);
+                return attrs.layoutBindings[attrs.effectiveLayout].diagonal(o, o, o);
             });
 
         // Get links update selection
@@ -902,19 +1041,8 @@ export class OrgChart {
             .attr("fill", "none")
 
 
-        if (this.isEdge()) {
-            linkUpdate
-                .style('display', d => {
-                    const display = d.data._pagingButton ? 'none' : 'auto'
-                    return display;
-                })
-        } else {
-            linkUpdate
-                .attr('display', d => {
-                    const display = d.data._pagingButton ? 'none' : 'auto'
-                    return display;
-                })
-        }
+        linkUpdate
+            .attr('display', d => d.data._pagingButton ? 'none' : 'auto');
 
         // Allow external modifications
         linkUpdate.each(attrs.linkUpdate);
@@ -926,24 +1054,24 @@ export class OrgChart {
             .attr("d", (d) => {
                 const n = attrs.compact && d.flexCompactDim ?
                     {
-                        x: attrs.layoutBindings[attrs.layout].compactLinkMidX(d, attrs),
-                        y: attrs.layoutBindings[attrs.layout].compactLinkMidY(d, attrs)
+                        x: attrs.layoutBindings[attrs.effectiveLayout].compactLinkMidX(d, attrs),
+                        y: attrs.layoutBindings[attrs.effectiveLayout].compactLinkMidY(d, attrs)
                     } :
                     {
-                        x: attrs.layoutBindings[attrs.layout].linkX(d),
-                        y: attrs.layoutBindings[attrs.layout].linkY(d)
+                        x: attrs.layoutBindings[attrs.effectiveLayout].linkX(d),
+                        y: attrs.layoutBindings[attrs.effectiveLayout].linkY(d)
                     };
 
                 const p = {
-                    x: attrs.layoutBindings[attrs.layout].linkParentX(d),
-                    y: attrs.layoutBindings[attrs.layout].linkParentY(d),
+                    x: attrs.layoutBindings[attrs.effectiveLayout].linkParentX(d),
+                    y: attrs.layoutBindings[attrs.effectiveLayout].linkParentY(d),
                 };
 
                 const m = attrs.compact && d.flexCompactDim ? {
-                    x: attrs.layoutBindings[attrs.layout].linkCompactXStart(d),
-                    y: attrs.layoutBindings[attrs.layout].linkCompactYStart(d),
+                    x: attrs.layoutBindings[attrs.effectiveLayout].linkCompactXStart(d),
+                    y: attrs.layoutBindings[attrs.effectiveLayout].linkCompactYStart(d),
                 } : n;
-                return attrs.layoutBindings[attrs.layout].diagonal(n, p, m, { sy: attrs.linkYOffset });
+                return attrs.layoutBindings[attrs.effectiveLayout].diagonal(n, p, m, { sy: attrs.linkYOffset });
             });
 
         // Remove any  links which is exiting after animation
@@ -952,10 +1080,10 @@ export class OrgChart {
             .transition()
             .duration(attrs.duration)
             .attr("d", (d) => {
-                const xo = attrs.layoutBindings[attrs.layout].linkJoinX({ x, y, width, height });
-                const yo = attrs.layoutBindings[attrs.layout].linkJoinY({ x, y, width, height });
+                const xo = attrs.layoutBindings[attrs.effectiveLayout].linkJoinX({ x, y, width, height });
+                const yo = attrs.layoutBindings[attrs.effectiveLayout].linkJoinY({ x, y, width, height });
                 const o = { x: xo, y: yo };
-                return attrs.layoutBindings[attrs.layout].diagonal(o, o, null, { sy: attrs.linkYOffset });
+                return attrs.layoutBindings[attrs.effectiveLayout].diagonal(o, o, null, { sy: attrs.linkYOffset });
             })
             .remove();
 
@@ -972,10 +1100,10 @@ export class OrgChart {
             .insert("path", "g")
             .attr("class", "connection")
             .attr("d", (d) => {
-                const xo = attrs.layoutBindings[attrs.layout].linkJoinX({ x: x0, y: y0, width, height });
-                const yo = attrs.layoutBindings[attrs.layout].linkJoinY({ x: x0, y: y0, width, height });
+                const xo = attrs.layoutBindings[attrs.effectiveLayout].linkJoinX({ x: x0, y: y0, width, height });
+                const yo = attrs.layoutBindings[attrs.effectiveLayout].linkJoinY({ x: x0, y: y0, width, height });
                 const o = { x: xo, y: yo };
-                return attrs.layoutBindings[attrs.layout].diagonal(o, o, null, { sy: attrs.linkYOffset });
+                return attrs.layoutBindings[attrs.effectiveLayout].diagonal(o, o, null, { sy: attrs.linkYOffset });
             });
 
 
@@ -990,10 +1118,10 @@ export class OrgChart {
             .transition()
             .duration(attrs.duration)
             .attr('d', (d) => {
-                const xs = attrs.layoutBindings[attrs.layout].linkX({ x: d._source.x, y: d._source.y, width: d._source.width, height: d._source.height });
-                const ys = attrs.layoutBindings[attrs.layout].linkY({ x: d._source.x, y: d._source.y, width: d._source.width, height: d._source.height });
-                const xt = attrs.layoutBindings[attrs.layout].linkJoinX({ x: d._target.x, y: d._target.y, width: d._target.width, height: d._target.height });
-                const yt = attrs.layoutBindings[attrs.layout].linkJoinY({ x: d._target.x, y: d._target.y, width: d._target.width, height: d._target.height });
+                const xs = attrs.layoutBindings[attrs.effectiveLayout].linkX({ x: d._source.x, y: d._source.y, width: d._source.width, height: d._source.height });
+                const ys = attrs.layoutBindings[attrs.effectiveLayout].linkY({ x: d._source.x, y: d._source.y, width: d._source.width, height: d._source.height });
+                const xt = attrs.layoutBindings[attrs.effectiveLayout].linkJoinX({ x: d._target.x, y: d._target.y, width: d._target.width, height: d._target.height });
+                const yt = attrs.layoutBindings[attrs.effectiveLayout].linkJoinY({ x: d._target.x, y: d._target.y, width: d._target.width, height: d._target.height });
                 return attrs.linkGroupArc({ source: { x: xs, y: ys }, target: { x: xt, y: yt } })
             })
 
@@ -1021,42 +1149,26 @@ export class OrgChart {
             .attr("class", "node")
             .attr("transform", (d) => {
                 if (d == attrs.root) return `translate(${x0},${y0})`
-                const xj = attrs.layoutBindings[attrs.layout].nodeJoinX({ x: x0, y: y0, width, height });
-                const yj = attrs.layoutBindings[attrs.layout].nodeJoinY({ x: x0, y: y0, width, height });
+                const xj = attrs.layoutBindings[attrs.effectiveLayout].nodeJoinX({ x: x0, y: y0, width, height });
+                const yj = attrs.layoutBindings[attrs.effectiveLayout].nodeJoinY({ x: x0, y: y0, width, height });
                 return `translate(${xj},${yj})`
             })
             .attr("cursor", "pointer")
             .on("click.node", (event, node) => {
                 const { data } = node;
-                if ([...event.srcElement.classList].includes("node-button-foreign-object")) {
+                attrs.focusedNodeId = attrs.nodeId(data);
+                if (event.target.closest(".node-button-g")) {
                     return;
                 }
-                if ([...event.srcElement.classList].includes("paging-button-wrapper")) {
+                if (event.target.closest(".paging-button-wrapper")) {
                     this.loadPagingNodes(node);
                     return;
                 }
                 if (!data._pagingButton) {
-                    attrs.onNodeClick(node);
-                    return;
+                    attrs.onNodeClick(node, event);
                 }
-                console.log('event fired, no handlers')
             })
-            //  Event handler to the expand button
-            .on("keydown.node", (event, node) => {
-                const { data } = node;
-                if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
-                    if ([...event.srcElement.classList].includes("node-button-foreign-object")) {
-                        return;
-                    }
-                    if ([...event.srcElement.classList].includes("paging-button-wrapper")) {
-                        this.loadPagingNodes(node);
-                        return;
-                    }
-                    if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
-                        this.onButtonClick(event, node)
-                    }
-                }
-            });
+            .on("keydown.node", (event, node) => this.onNodeKeydown(event, node));
         nodeEnter.each(attrs.nodeEnter)
 
         // Add background rectangle for the nodes
@@ -1070,7 +1182,7 @@ export class OrgChart {
         // Node update styles
         const nodeUpdate = nodeEnter
             .merge(nodesSelection)
-            .style("font", "12px sans-serif");
+            .style("font-size", "12px");
 
         // Add foreignObject element inside rectangle
         const fo = nodeUpdate.patternify({
@@ -1096,12 +1208,9 @@ export class OrgChart {
                 selector: "node-button-g",
                 data: (d) => [d]
             })
-            .on("click", (event, d) => this.onButtonClick(event, d))
-            .on("keydown", (event, d) => {
-                if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
-                    this.onButtonClick(event, d)
-                }
-            });
+            // The button is a mouse affordance only, keyboard users toggle from the node itself (Space / arrows)
+            .attr("aria-hidden", "true")
+            .on("click", (event, d) => this.onButtonClick(event, d));
 
         nodeButtonGroups.patternify({
             tag: 'rect',
@@ -1145,7 +1254,7 @@ export class OrgChart {
             .attr("opacity", 0)
             .duration(attrs.duration)
             .attr("transform", ({ x, y, width, height }) => {
-                return attrs.layoutBindings[attrs.layout].nodeUpdateTransform({ x, y, width, height });
+                return attrs.layoutBindings[attrs.effectiveLayout].nodeUpdateTransform({ x, y, width, height });
 
             })
             .attr("opacity", 1);
@@ -1159,12 +1268,12 @@ export class OrgChart {
             .attr("y", ({ height }) => 0)
             .attr("cursor", "pointer")
             .attr('rx', 3)
-            .attr("fill", attrs.nodeDefaultBackground)
+            .style("fill", attrs.nodeDefaultBackground)
 
 
         nodeUpdate.select(".node-button-g").attr("transform", ({ data, width, height }) => {
-            const x = attrs.layoutBindings[attrs.layout].buttonX({ width, height });
-            const y = attrs.layoutBindings[attrs.layout].buttonY({ width, height });
+            const x = attrs.layoutBindings[attrs.effectiveLayout].buttonX({ width, height });
+            const y = attrs.layoutBindings[attrs.effectiveLayout].buttonY({ width, height });
             return `translate(${x},${y})`
         })
             .attr("display", ({ data }) => {
@@ -1200,9 +1309,11 @@ export class OrgChart {
                 if (children) return "-";
                 return "+";
             })
-            .attr("y", this.isEdge() ? 10 : 0);
+            .attr("y", 0);
 
         nodeUpdate.each(attrs.nodeUpdate)
+
+        this.updateAccessibility(nodeUpdate);
 
         // Remove any exiting nodes after transition
         const nodeExitTransition = nodesSelection
@@ -1217,8 +1328,8 @@ export class OrgChart {
             .attr("transform", (d) => {
 
                 let { x, y, width, height } = maxDepthNode.parent || {};
-                const ex = attrs.layoutBindings[attrs.layout].nodeJoinX({ x, y, width, height });
-                const ey = attrs.layoutBindings[attrs.layout].nodeJoinY({ x, y, width, height });
+                const ex = attrs.layoutBindings[attrs.effectiveLayout].nodeJoinX({ x, y, width, height });
+                const ey = attrs.layoutBindings[attrs.effectiveLayout].nodeJoinY({ x, y, width, height });
                 return `translate(${ex},${ey})`
             })
             .on("end", function () {
@@ -1263,11 +1374,6 @@ export class OrgChart {
 
     }
 
-    // This function detects whether current browser is edge
-    isEdge() {
-        return window.navigator.userAgent.includes("Edge");
-    }
-
     // Generate horizontal diagonal - play with it here - https://observablehq.com/@bumbeishvili/curved-edges-horizontal-d3-v3-v4-v5-v6
     hdiagonal(s, t, m, offsets) {
         const state = this.getChartState();
@@ -1301,6 +1407,124 @@ export class OrgChart {
             })
     }
 
+    // Sets ARIA tree semantics and the roving tabindex on rendered nodes
+    updateAccessibility(nodeUpdate) {
+        const attrs = this.getChartState();
+        const focusTarget = this.getFocusTarget();
+        nodeUpdate
+            .attr("role", "treeitem")
+            .attr("aria-level", d => d.depth + 1)
+            .attr("aria-setsize", d => d.parent ? d.parent.children.length : 1)
+            .attr("aria-posinset", d => d.parent ? d.parent.children.indexOf(d) + 1 : 1)
+            .attr("aria-expanded", d => d.children ? "true" : (d._children ? "false" : null))
+            .attr("aria-selected", d => d.data._highlighted ? "true" : null)
+            .attr("tabindex", d => d === focusTarget ? 0 : -1)
+            .attr("aria-label", function (d) {
+                if (attrs.nodeAriaLabel) return attrs.nodeAriaLabel(d);
+                const content = this.querySelector(".node-foreign-object-div");
+                return content ? content.textContent.replace(/\s+/g, " ").trim() : null;
+            });
+    }
+
+    // The visible node that should be focusable: the focused node, its closest visible ancestor, or the root
+    getFocusTarget() {
+        const attrs = this.getChartState();
+        if (!attrs.root) return null;
+        const visible = this.getVisibleNodes();
+        if (attrs.focusedNodeId != null) {
+            let node = attrs.allNodes.find(d => attrs.nodeId(d.data) == attrs.focusedNodeId);
+            while (node) {
+                if (visible.includes(node)) return node;
+                node = node.parent;
+            }
+        }
+        return attrs.root;
+    }
+
+    // Visible nodes in depth-first order (the reading order of the tree)
+    getVisibleNodes() {
+        const attrs = this.getChartState();
+        const nodes = [];
+        if (attrs.root) attrs.root.eachBefore(d => nodes.push(d));
+        return nodes;
+    }
+
+    // Moves keyboard focus to a node, bringing it into view when needed
+    focusNode(node) {
+        const attrs = this.getChartState();
+        attrs.focusedNodeId = attrs.nodeId(node.data);
+        const element = attrs.nodesWrapper
+            .selectAll("g.node")
+            .attr("tabindex", d => d === node ? 0 : -1)
+            .filter(d => d === node)
+            .node();
+        if (!element) return;
+        element.focus({ preventScroll: true });
+        const svgRect = attrs.svg.node().getBoundingClientRect();
+        const rect = element.getBoundingClientRect();
+        const outside = rect.left < svgRect.left || rect.right > svgRect.right || rect.top < svgRect.top || rect.bottom > svgRect.bottom;
+        if (outside) {
+            this.fit({ nodes: [node], scale: false });
+        }
+    }
+
+    // Keyboard support, following the WAI-ARIA tree view pattern
+    onNodeKeydown(event, node) {
+        const attrs = this.getChartState();
+        // Keys pressed inside interactive content of a node (inputs, links, ...) belong to that content
+        if (event.target !== event.currentTarget) return;
+        const visible = this.getVisibleNodes();
+        const index = visible.indexOf(node);
+        const forward = attrs.isRtl ? "ArrowLeft" : "ArrowRight";
+        const backward = attrs.isRtl ? "ArrowRight" : "ArrowLeft";
+        const hasChildren = !!(node.children || node._children) && !node.data._pagingButton;
+        let target = null;
+
+        switch (event.key) {
+            case "ArrowDown":
+                target = visible[index + 1];
+                break;
+            case "ArrowUp":
+                target = visible[index - 1];
+                break;
+            case "Home":
+                target = visible[0];
+                break;
+            case "End":
+                target = visible[visible.length - 1];
+                break;
+            case forward:
+                if (node._children && hasChildren) {
+                    this.onButtonClick(event, node);
+                } else if (node.children) {
+                    target = node.children[0];
+                }
+                break;
+            case backward:
+                if (node.children && hasChildren) {
+                    this.onButtonClick(event, node);
+                } else if (node.parent) {
+                    target = node.parent;
+                }
+                break;
+            case "Enter":
+                if (node.data._pagingButton) {
+                    this.loadPagingNodes(node);
+                } else {
+                    attrs.onNodeClick(node, event);
+                }
+                break;
+            case " ":
+            case "Spacebar":
+                if (hasChildren) this.onButtonClick(event, node);
+                break;
+            default:
+                return;
+        }
+        event.preventDefault();
+        if (target) this.focusNode(target);
+    }
+
     // Toggle children on click.
     onButtonClick(event, d) {
         const attrs = this.getChartState();
@@ -1332,11 +1556,12 @@ export class OrgChart {
         }
 
         // Redraw Graph
+        attrs.focusedNodeId = attrs.nodeId(d.data);
         this.update(d);
         event.stopPropagation();
 
         // Trigger callback
-        attrs.onExpandOrCollapse(d);
+        attrs.onExpandOrCollapse(d, !!d.children);
 
     }
 
@@ -1467,7 +1692,7 @@ export class OrgChart {
         attrs.root = d3
             .stratify()
             .id((d) => attrs.nodeId(d))
-            .parentId(d => attrs.parentNodeId(d))(attrs.data.filter(d => hiddenNodesMap[d.id] !== true));
+            .parentId(d => attrs.parentNodeId(d))(attrs.data.filter(d => hiddenNodesMap[attrs.nodeId(d)] !== true));
 
         attrs.root.each((node, i, arr) => {
             let _hierarchyHeight = node._hierarchyHeight || node.height
@@ -1492,7 +1717,7 @@ export class OrgChart {
         if (attrs.root.children) {
             if (expandNodesFirst) {
                 // Expand all nodes first
-                attrs.root.children.forEach(this.expand);
+                attrs.root.children.forEach((d) => this.expand(d));
             }
             // Then collapse them all
             attrs.root.children.forEach((d) => this.collapse(d));
@@ -1539,15 +1764,12 @@ export class OrgChart {
 
         // Reposition and rescale chart accordingly
         chart.attr("transform", transform);
-
-        // Apply new styles to the foreign object element
-        if (this.isEdge()) {
-            this.restyleForeignObjectElements();
-        }
     }
 
     zoomTreeBounds({ x0, x1, y0, y1, params = { animate: true, scale: true, onCompleted: () => { } } }) {
-        const { centerG, svgWidth: w, svgHeight: h, svg, zoomBehavior, duration, lastTransform } = this.getChartState()
+        const { centerG, calc, svg, zoomBehavior, duration, lastTransform } = this.getChartState()
+        const w = calc.chartWidth;
+        const h = calc.chartHeight;
         let scaleVal = Math.min(8, 0.9 / Math.max((x1 - x0) / w, (y1 - y0) / h));
         let identity = d3.zoomIdentity.translate(w / 2, h / 2)
         identity = identity.scale(params.scale ? scaleVal : lastTransform.k)
@@ -1565,12 +1787,13 @@ export class OrgChart {
 
     fit({ animate = true, nodes, scale = true, onCompleted = () => { } } = {}) {
         const attrs = this.getChartState();
+        if (!this.isRendered('FIT')) return this;
         const { root } = attrs;
         let descendants = nodes ? nodes : root.descendants();
-        const minX = d3.min(descendants, d => d.x + attrs.layoutBindings[attrs.layout].nodeLeftX(d))
-        const maxX = d3.max(descendants, d => d.x + attrs.layoutBindings[attrs.layout].nodeRightX(d))
-        const minY = d3.min(descendants, d => d.y + attrs.layoutBindings[attrs.layout].nodeTopY(d))
-        const maxY = d3.max(descendants, d => d.y + attrs.layoutBindings[attrs.layout].nodeBottomY(d))
+        const minX = d3.min(descendants, d => d.x + attrs.layoutBindings[attrs.effectiveLayout].nodeLeftX(d))
+        const maxX = d3.max(descendants, d => d.x + attrs.layoutBindings[attrs.effectiveLayout].nodeRightX(d))
+        const minY = d3.min(descendants, d => d.y + attrs.layoutBindings[attrs.effectiveLayout].nodeTopY(d))
+        const maxY = d3.max(descendants, d => d.y + attrs.layoutBindings[attrs.effectiveLayout].nodeBottomY(d))
 
         this.zoomTreeBounds({
             params: { animate: animate, scale, onCompleted },
@@ -1602,7 +1825,7 @@ export class OrgChart {
         const node = attrs.allNodes.filter(({ data }) => attrs.nodeId(data) == id)[0];
 
         if (!node) {
-            console.log(`ORG CHART - ${expandedFlag ? "EXPAND" : "COLLAPSE"} - Node with id (${id})  not found in the tree`)
+            this.handleError(ErrorCodes.NodeNotFound, `${expandedFlag ? "EXPAND" : "COLLAPSE"} - Node with id (${id}) not found in the tree`);
             return this;
         }
         node.data._expanded = expandedFlag;
@@ -1623,7 +1846,7 @@ export class OrgChart {
         const descendants = root.descendants();
         const node = descendants.filter(({ data }) => attrs.nodeId(data).toString() == nodeId.toString())[0];
         if (!node) {
-            console.log(`ORG CHART - CENTER - Node with id (${nodeId}) not found in the tree`)
+            this.handleError(ErrorCodes.NodeNotFound, `CENTER - Node with id (${nodeId}) not found in the tree`);
             return this;
         }
         const ancestors = node.ancestors();
@@ -1639,7 +1862,7 @@ export class OrgChart {
         const descendants = root.descendants();
         const node = descendants.filter(d => attrs.nodeId(d.data).toString() === nodeId.toString())[0];
         if (!node) {
-            console.log(`ORG CHART - HIGHLIGHT - Node with id (${nodeId})  not found in the tree`);
+            this.handleError(ErrorCodes.NodeNotFound, `HIGHLIGHT - Node with id (${nodeId}) not found in the tree`);
             return this
         }
         const ancestors = node.ancestors();
@@ -1656,7 +1879,7 @@ export class OrgChart {
         const descendants = root.descendants();
         const node = descendants.filter(d => attrs.nodeId(d.data).toString() === nodeId.toString())[0];
         if (!node) {
-            console.log(`ORG CHART - HIGHLIGHTROOT - Node with id (${nodeId}) not found in the tree`)
+            this.handleError(ErrorCodes.NodeNotFound, `HIGHLIGHTROOT - Node with id (${nodeId}) not found in the tree`);
             return this;
         }
         const ancestors = node.ancestors();
@@ -1682,55 +1905,49 @@ export class OrgChart {
         const attrs = this.getChartState();
         const el = d3.select(elem || attrs.container).node();
 
-        d3.select(document).on('fullscreenchange.' + attrs.id, function (d) {
-            const fsElement = document.fullscreenElement || document.mozFullscreenElement || document.webkitFullscreenElement;
-            if (fsElement == el) {
-                setTimeout(d => {
-                    attrs.svg.attr('height', window.innerHeight - 40);
-                }, 500)
+        d3.select(document).on('fullscreenchange.' + attrs.id, () => {
+            if (!attrs.svg) return;
+            if (document.fullscreenElement == el) {
+                attrs.svg.attr('height', window.innerHeight - 40);
             } else {
-                attrs.svg.attr('height', attrs.svgHeight)
+                attrs.calc.chartHeight = null;
+                this.resize();
             }
         })
 
-        if (el.requestFullscreen) {
-            el.requestFullscreen();
-        } else if (el.mozRequestFullScreen) {
-            el.mozRequestFullScreen();
-        } else if (el.webkitRequestFullscreen) {
-            el.webkitRequestFullscreen();
-        } else if (el.msRequestFullscreen) {
-            el.msRequestFullscreen();
-        }
+        return el.requestFullscreen();
     }
 
     // Zoom in exposed method
     zoomIn() {
+        if (!this.isRendered('ZOOMIN')) return this;
         const { svg, zoomBehavior } = this.getChartState();
         svg.transition().call(zoomBehavior.scaleBy, 1.3);
+        return this;
     }
 
     // Zoom out exposed method
     zoomOut() {
+        if (!this.isRendered('ZOOMOUT')) return this;
         const { svg, zoomBehavior } = this.getChartState();
         svg.transition().call(zoomBehavior.scaleBy, 0.78);
+        return this;
     }
 
     toDataURL(url, callback) {
-        var xhr = new XMLHttpRequest();
-        xhr.onload = function () {
-            var reader = new FileReader();
-            reader.onloadend = function () {
-                callback(reader.result);
-            }
-            reader.readAsDataURL(xhr.response);
-        };
-        xhr.open('GET', url);
-        xhr.responseType = 'blob';
-        xhr.send();
+        fetch(url)
+            .then(response => response.blob())
+            .then(blob => {
+                const reader = new FileReader();
+                reader.onloadend = () => callback(reader.result);
+                reader.readAsDataURL(blob);
+            })
+            // Leave the image as is when it cannot be fetched (e.g. CORS), so the export still completes
+            .catch(() => callback(url));
     }
 
     exportImg({ full = false, scale = 3, onLoad = d => d, save = true, backgroundColor = "#FAFAFA" } = {}) {
+        if (!this.isRendered('EXPORT')) return this;
         const that = this;
         const attrs = this.getChartState();
         const { svg: svgImg, root } = attrs
@@ -1781,6 +1998,7 @@ export class OrgChart {
 
 
     exportSvg() {
+        if (!this.isRendered('EXPORT')) return this;
         const { svg, imageName } = this.getChartState();
         this.downloadImage({ imageName: imageName, node: svg.node(), scale: 3, isSvg: true })
         return this;
@@ -1820,11 +2038,28 @@ export class OrgChart {
             }
         }
         // This function serializes SVG and sets all necessary attributes
+        // CSS variables cannot be resolved once the svg is rendered as a standalone image,
+        // so inline styles that use them get the values computed on the page
+        const themedProperties = ['stroke', 'fill', 'color', 'background-color', 'font-family',
+            'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color'];
+        function inlineThemeVariables(source, target) {
+            const style = source.getAttribute && source.getAttribute('style');
+            if (style && style.includes('var(')) {
+                const computed = getComputedStyle(source);
+                themedProperties.forEach(prop => target.style.setProperty(prop, computed.getPropertyValue(prop)));
+            }
+            for (let i = 0; i < source.children.length; i++) {
+                inlineThemeVariables(source.children[i], target.children[i]);
+            }
+        }
+
         function serializeString(svg) {
             const xmlns = 'http://www.w3.org/2000/xmlns/';
             const xlinkns = 'http://www.w3.org/1999/xlink';
             const svgns = 'http://www.w3.org/2000/svg';
+            const original = svg;
             svg = svg.cloneNode(true);
+            inlineThemeVariables(original, svg);
             const fragment = window.location.href + '#';
             const walker = document.createTreeWalker(svg, NodeFilter.SHOW_ELEMENT, null, false);
             while (walker.nextNode()) {
@@ -1892,7 +2127,7 @@ export class OrgChart {
     getTextWidth(text, {
         fontSize = 14,
         fontWeight = 400,
-        defaultFont = "Helvetice",
+        defaultFont = "Helvetica",
         ctx
     } = {}) {
         ctx.font = `${fontWeight || ''} ${fontSize}px ${defaultFont} `
@@ -1900,10 +2135,48 @@ export class OrgChart {
         return measurement.width;
     }
 
-    // Clear after moving off from the page
+    // Clear after moving off from the page (keeps the svg element, see destroy() for a full teardown)
     clear() {
         const attrs = this.getChartState();
-        d3.select(window).on(`resize.${attrs.id}`, null);
+        this.detachListeners();
         attrs.svg && attrs.svg.selectAll("*").remove();
+    }
+
+    // Removes every listener / observer the chart registered outside of its own svg
+    detachListeners() {
+        const attrs = this.getChartState();
+        if (attrs.resizeObserver) {
+            attrs.resizeObserver.disconnect();
+            attrs.resizeObserver = null;
+        }
+        d3.select(document).on('fullscreenchange.' + attrs.id, null);
+    }
+
+    // Full teardown: stops transitions, removes listeners and the svg, and resets the chart so it can be rendered again
+    destroy() {
+        const attrs = this.getChartState();
+        this.detachListeners();
+        if (attrs.svg) {
+            attrs.svg.interrupt();
+            attrs.svg.selectAll('*').interrupt();
+            attrs.svg.on('.zoom', null);
+            attrs.svg.remove();
+        }
+        Object.assign(attrs, {
+            svg: null,
+            chart: null,
+            centerG: null,
+            linksWrapper: null,
+            nodesWrapper: null,
+            connectionsWrapper: null,
+            defsWrapper: null,
+            root: null,
+            allNodes: [],
+            calc: null,
+            zoomBehavior: null,
+            firstDraw: true,
+            lastTransform: { x: 0, y: 0, k: 1 },
+        });
+        return this;
     }
 }

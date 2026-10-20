@@ -1,5 +1,7 @@
 [![SWUbanner](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/banner2-direct.svg)](https://github.com/vshymanskyy/StandWithUkraine/blob/main/docs/README.md)
 
+> **Maintained fork.** This is a maintained fork of [bumbeishvili/org-chart](https://github.com/bumbeishvili/org-chart) (`d3-org-chart` on npm), whose last release was v3.1.1 in September 2023. Version 4 modernizes the build, adds tests and fixes lifecycle, sizing and escaping issues so the chart can be embedded in host frameworks such as OutSystems. See [CHANGELOG.md](CHANGELOG.md) for what changed and how to upgrade from v3. All credit for the original chart goes to [David Bumbeishvili](https://github.com/bumbeishvili).
+
 # Highly customizable d3 based organization chart
 
 <span class="badge-npmversion"><a href="https://npmjs.org/package/d3-org-chart" title="View this project on NPM"><img src="https://img.shields.io/npm/v/d3-org-chart.svg" alt="NPM version" /></a></span>
@@ -253,41 +255,101 @@ Drag & Drop Nodes <img width=180 src="https://raw.githubusercontent.com/bumbeish
 ## How to use
 
 
-Just copy this code and paste at - [https://realtimehtml.com/](https://realtimehtml.com#code=DwZwxgTglgDgLgAhBMBeARACznGIBcA9IQCYDMAViAHQD2EA5qWdQG4Ds1AtlAHbVV0APmCFw0eEIBQoSLETI0WHHiKEwJflRIBTADZRWEarx1xCvGF2YBaegxthMAQwhwAAmWGjx86bIkFFAxsXAJiDS0QXQMjEzMLK1sAMz0dAA84CB0ddwAmagBGajzCACMAVyg9EhS0zOydARBvMTlJGRJDBDA9ZxAQDCdXOEdaXjhnPh0IVq7WaRlfDoRWVx6XNwBuKQRyXYRqMBBWAAoDhGUwtQhnAHdqBig4TArKkBmwcbgdCaPaayVLhlHRQECYVjVKBiZxcGBpGwkZyTQhcKa8Qj2I4ndAHACUB2oL1+p1OSMmeIQqCECAA3hdhm4qQhTHc9iwAPKMADCmzgpzx-wm6Jmp3QRz5Y2F01mgvJzjJyOcguyvF0EAFOwQCAAvnidj52nAhEA)
+### Standalone script
+
+`dist/d3-org-chart.min.js` contains everything the chart needs (the d3 modules it uses are bundled in), so it is the only file to load. It exposes `d3.OrgChart`, and merges into an existing `d3` global instead of replacing it, so loading the full d3 bundle on the same page is fine.
 
 ```html
-<script src="https://d3js.org/d3.v7.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/d3-org-chart@3"></script>
-<script src="https://cdn.jsdelivr.net/npm/d3-flextree@2.1.2/build/d3-flextree.js"></script>
-<div class="chart-container"></div>
+<script src="dist/d3-org-chart.min.js"></script>
+<div class="chart-container" style="height: 600px"></div>
 
 <script>
- var chart;
- d3
-  .csv(
-   "https://raw.githubusercontent.com/bumbeishvili/sample-data/main/org.csv"
-  )
-  .then((data) => {
-   chart = new d3.OrgChart().container(".chart-container").data(data).render();
-  });
+ const chart = new d3.OrgChart()
+  .container(".chart-container")
+  .data([
+   { id: "1", parentId: null, name: "CEO" },
+   { id: "2", parentId: "1", name: "CTO" },
+  ])
+  .nodeContent((d) => `<div>${d3.escapeHtml(d.data.name)}</div>`)
+  .render();
 </script>
 ```
 
-### Installing
-
-```
-npm i d3-org-chart
-```
+### ES module
 
 ```javascript
-import { OrgChart } from 'd3-org-chart';
+import { OrgChart, escapeHtml } from '@adamcfield/d3-org-chart';
 
- new OrgChart()
-     .container(<DomElementOrCssSelector>)
-     .data(<Data>) // https://github.com/bumbeishvili/sample-data/blob/main/data-oracle.csv
-     .render();
+const chart = new OrgChart()
+    .container(<DomElementOrCssSelector>)
+    .data(<Data>)
+    .render();
+
+// When the host removes the chart (route change, component dispose, ...)
+chart.destroy();
 ```
 
+### Sizing
+
+By default the svg takes the size of its container and follows it when the container is resized. Give the container a height, or set `svgHeight(...)` explicitly; a container without a height gets 600px. Set `autoResize(false)` to turn the resize observer off.
+
+### Escaping
+
+`nodeContent` returns HTML, so any text that comes from data must be escaped. Use `escapeHtml` (`d3.escapeHtml` in the standalone script) for every interpolated value. The built-in templates and connection labels are escaped already.
+
+### Errors
+
+By default, API calls with an unknown node id log a warning and do nothing. With `strict(true)` they throw an `OrgChartError` with a `code` (`NODE_NOT_FOUND`, `NODE_ALREADY_EXISTS`, `NOT_RENDERED`, `CONTAINER_NOT_FOUND`).
+
+### Right-to-left
+
+`rtl("auto")` (the default) mirrors the chart when its container has `direction: rtl`, for example inside `<html dir="rtl">`. The top and bottom layouts list siblings from right to left, and the left and right layouts swap. `rtl(true)` / `rtl(false)` force it. Call `render()` after the page direction changes.
+
+### Accessibility
+
+The nodes form an ARIA tree (`role="tree"` / `role="treeitem"` with level, position and expanded state), with one node in the tab order at a time. Keyboard support follows the WAI-ARIA tree view pattern:
+
+| Key | Action |
+| --- | --- |
+| Up / Down | Previous / next visible node |
+| Right (Left in rtl) | Expand, or move to the first child |
+| Left (Right in rtl) | Collapse, or move to the parent |
+| Home / End | First / last visible node |
+| Enter | Activate the node (`onNodeClick`), or load the next page on a paging node |
+| Space | Expand or collapse |
+
+The accessible name of a node is its text content; override it with `nodeAriaLabel(d => ...)`. The chart's name is set with `ariaLabel(...)`.
+
+### Theming
+
+Colors are CSS variables with the original colors as fallbacks, so they can be set from CSS on the container or any ancestor:
+
+| Variable | Default | Used for |
+| --- | --- | --- |
+| `--oc-font-family` | `defaultFont` (Helvetica) | Chart font |
+| `--oc-link-color` | `#E4E2E9` | Links between nodes |
+| `--oc-highlight-color` | `#E27396` | Highlighted nodes and links |
+| `--oc-node-background` | `none` | Node background rectangle |
+| `--oc-button-background` | `white` | Expand / collapse button |
+| `--oc-button-border-color` | `#E4E2E9` | Expand / collapse button border |
+| `--oc-button-color` | `#716E7B` | Expand / collapse button icon and count |
+| `--oc-paging-background` | `#E5E9F2` | "Show next nodes" button |
+| `--oc-paging-color` | `#716E7B` | "Show next nodes" button text |
+| `--oc-connection-color` | `#E27396` | Extra connections and their labels' background |
+| `--oc-connection-label-color` | `white` | Connection label text |
+| `--oc-focus-color` | `#1068EB` | Keyboard focus ring |
+
+`themes/osui.css` maps these to the OutSystems UI theme roles (`--color-primary`, `--color-border`, ...); add the `osui-org-chart` class to the container to use it. Exported images keep the theme colors.
+
+### Developing
+
+```
+npm install
+npm test          # builds dist/ and runs the browser tests (headless Chromium)
+npm run typecheck # checks index.d.ts
+```
+
+`dist/` is committed so the standalone script can be downloaded straight from GitHub; CI fails when it is out of date.
 
 In general, we encourage to look into the source code to understand how it works. The chart code is basically a single class. At the top of the class, we have a state object called `attrs` which stores the state of the org chart and each single property is overridable by  the user.
 
