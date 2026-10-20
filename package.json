@@ -25,11 +25,13 @@
       "default": "./dist/d3-org-chart.esm.js"
     },
     "./standalone": "./dist/d3-org-chart.js",
-    "./standalone.min": "./dist/d3-org-chart.min.js"
+    "./standalone.min": "./dist/d3-org-chart.min.js",
+    "./themes/osui.css": "./themes/osui.css"
   },
   "files": [
     "dist",
     "src",
+    "themes",
     "index.js",
     "index.d.ts"
   ],

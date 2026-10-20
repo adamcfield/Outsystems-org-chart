@@ -70,6 +70,17 @@ export interface StatePublic<Datum> {
      */
     strict: boolean;
     /**
+     * Right-to-left mirroring: true, false, or "auto" (default) to follow the container's CSS direction.
+     * Mirrors sibling order in the top / bottom layouts and swaps the left / right layouts.
+     */
+    rtl: boolean | "auto";
+    /** Accessible name of the chart (the element with role="tree"). default is "Organization chart" */
+    ariaLabel: string;
+    /** Accessible name of a node. default is null: the node's text content */
+    nodeAriaLabel: ((node: HierarchyNode<Datum>) => string) | null;
+    /** Id of the node that is in the tab order (roving tabindex). default is null: the root */
+    focusedNodeId: NodeId | null;
+    /**
      * Configure zoom scale extent , if you don't want any kind of zooming, set it to [1,1]
      */
     scaleExtent: [number, number];
@@ -346,6 +357,11 @@ export interface StatePublic<Datum> {
  * These are more internal in scope, but can be used when overriding functions.
  */
 export interface StateInternal<Datum> {
+    /** Layout actually drawn, after applying rtl */
+    readonly effectiveLayout: Layout;
+    readonly isRtl: boolean;
+    /** -1 when the top / bottom layouts are mirrored for right-to-left */
+    readonly rtlSign: 1 | -1;
     readonly root: HierarchyNode<Datum>;
     readonly allNodes: ReadonlyArray<HierarchyNode<Datum>>;
 }
@@ -630,6 +646,15 @@ export class OrgChart<Datum> {
      * The chart can be rendered again afterwards.
      */
     destroy(): this;
+
+    /** Resolves rtl and the layout that is actually drawn (called by render and update) */
+    resolveDirection(): this;
+
+    /** Visible nodes in depth-first order */
+    getVisibleNodes(): Array<HierarchyNode<Datum>>;
+
+    /** Moves keyboard focus to a node, bringing it into view when needed */
+    focusNode(node: HierarchyNode<Datum>): void;
 
     /** Applies the current container size to the svg (called automatically when autoResize is on) */
     resize(): this;

@@ -301,6 +301,46 @@ By default the svg takes the size of its container and follows it when the conta
 
 By default, API calls with an unknown node id log a warning and do nothing. With `strict(true)` they throw an `OrgChartError` with a `code` (`NODE_NOT_FOUND`, `NODE_ALREADY_EXISTS`, `NOT_RENDERED`, `CONTAINER_NOT_FOUND`).
 
+### Right-to-left
+
+`rtl("auto")` (the default) mirrors the chart when its container has `direction: rtl`, for example inside `<html dir="rtl">`. The top and bottom layouts list siblings from right to left, and the left and right layouts swap. `rtl(true)` / `rtl(false)` force it. Call `render()` after the page direction changes.
+
+### Accessibility
+
+The nodes form an ARIA tree (`role="tree"` / `role="treeitem"` with level, position and expanded state), with one node in the tab order at a time. Keyboard support follows the WAI-ARIA tree view pattern:
+
+| Key | Action |
+| --- | --- |
+| Up / Down | Previous / next visible node |
+| Right (Left in rtl) | Expand, or move to the first child |
+| Left (Right in rtl) | Collapse, or move to the parent |
+| Home / End | First / last visible node |
+| Enter | Activate the node (`onNodeClick`), or load the next page on a paging node |
+| Space | Expand or collapse |
+
+The accessible name of a node is its text content; override it with `nodeAriaLabel(d => ...)`. The chart's name is set with `ariaLabel(...)`.
+
+### Theming
+
+Colors are CSS variables with the original colors as fallbacks, so they can be set from CSS on the container or any ancestor:
+
+| Variable | Default | Used for |
+| --- | --- | --- |
+| `--oc-font-family` | `defaultFont` (Helvetica) | Chart font |
+| `--oc-link-color` | `#E4E2E9` | Links between nodes |
+| `--oc-highlight-color` | `#E27396` | Highlighted nodes and links |
+| `--oc-node-background` | `none` | Node background rectangle |
+| `--oc-button-background` | `white` | Expand / collapse button |
+| `--oc-button-border-color` | `#E4E2E9` | Expand / collapse button border |
+| `--oc-button-color` | `#716E7B` | Expand / collapse button icon and count |
+| `--oc-paging-background` | `#E5E9F2` | "Show next nodes" button |
+| `--oc-paging-color` | `#716E7B` | "Show next nodes" button text |
+| `--oc-connection-color` | `#E27396` | Extra connections and their labels' background |
+| `--oc-connection-label-color` | `white` | Connection label text |
+| `--oc-focus-color` | `#1068EB` | Keyboard focus ring |
+
+`themes/osui.css` maps these to the OutSystems UI theme roles (`--color-primary`, `--color-border`, ...); add the `osui-org-chart` class to the container to use it. Exported images keep the theme colors.
+
 ### Developing
 
 ```

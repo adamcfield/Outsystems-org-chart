@@ -4168,12 +4168,16 @@ var __d3OrgChart = (() => {
         // Whether chart is drawn for the first time
         ctx: document.createElement("canvas").getContext("2d"),
         initialExpandLevel: 1,
-        nodeDefaultBackground: "none",
+        nodeDefaultBackground: "var(--oc-node-background, none)",
         lastTransform: { x: 0, y: 0, k: 1 },
         // Panning and zooming values
         allowedNodesCount: {},
         zoomBehavior: null,
         generateRoot: null,
+        effectiveLayout: "top",
+        // Layout actually drawn, after applying rtl (see resolveDirection)
+        rtlSign: 1,
+        // -1 when the chart is mirrored for right-to-left
         /*  INTENDED FOR PUBLIC OVERRIDE */
         svgWidth: null,
         // Configure svg width, null = follow container width
@@ -4235,6 +4239,8 @@ var __d3OrgChart = (() => {
         // Configure if active node should be centered when expanded and collapsed
         layout: "top",
         // Configure layout direction , possible values are "top", "left", "right", "bottom"
+        rtl: "auto",
+        // Right-to-left mirroring: true, false, or "auto" to follow the container's CSS direction. Mirrors siblings order, and swaps the "left" and "right" layouts
         compact: true,
         // Configure if compact mode is enabled , when enabled, nodes are shown in compact positions, instead of horizontal spread
         createZoom: (d) => d3.zoom(),
@@ -4251,6 +4257,12 @@ var __d3OrgChart = (() => {
         // Callback for node click
         onExpandOrCollapse: (d, expanded) => d,
         // Callback for node expand or collapse
+        ariaLabel: "Organization chart",
+        // Accessible name of the chart (role="tree")
+        nodeAriaLabel: null,
+        // Accessible name of a node, d => string. Defaults to the text content of the node
+        focusedNodeId: null,
+        // Id of the node that receives keyboard focus (roving tabindex), defaults to the root
         /*
                     * Node HTML content generation , remember that you can access some helper methods:
         
@@ -4286,31 +4298,31 @@ var __d3OrgChart = (() => {
         buttonContent: ({ node, state }) => {
           const icons = {
             "left": (d) => d ? `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M14.283 3.50094L6.51 11.4749C6.37348 11.615 6.29707 11.8029 6.29707 11.9984C6.29707 12.194 6.37348 12.3819 6.51 12.5219L14.283 20.4989C14.3466 20.5643 14.4226 20.6162 14.5066 20.6516C14.5906 20.6871 14.6808 20.7053 14.772 20.7053C14.8632 20.7053 14.9534 20.6871 15.0374 20.6516C15.1214 20.6162 15.1974 20.5643 15.261 20.4989C15.3918 20.365 15.4651 20.1852 15.4651 19.9979C15.4651 19.8107 15.3918 19.6309 15.261 19.4969L7.9515 11.9984L15.261 4.50144C15.3914 4.36756 15.4643 4.18807 15.4643 4.00119C15.4643 3.81431 15.3914 3.63482 15.261 3.50094C15.1974 3.43563 15.1214 3.38371 15.0374 3.34827C14.9534 3.31282 14.8632 3.29456 14.772 3.29456C14.6808 3.29456 14.5906 3.31282 14.5066 3.34827C14.4226 3.38371 14.3466 3.43563 14.283 3.50094V3.50094Z" fill="#716E7B" stroke="#716E7B"/>
-                      </svg></span><span style="color:#716E7B">${node.data._directSubordinatesPaging} </span></div>` : `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                          <path d="M7.989 3.49944C7.85817 3.63339 7.78492 3.8132 7.78492 4.00044C7.78492 4.18768 7.85817 4.36749 7.989 4.50144L15.2985 11.9999L7.989 19.4969C7.85817 19.6309 7.78492 19.8107 7.78492 19.9979C7.78492 20.1852 7.85817 20.365 7.989 20.4989C8.05259 20.5643 8.12863 20.6162 8.21261 20.6516C8.2966 20.6871 8.38684 20.7053 8.478 20.7053C8.56916 20.7053 8.6594 20.6871 8.74338 20.6516C8.82737 20.6162 8.90341 20.5643 8.967 20.4989L16.74 12.5234C16.8765 12.3834 16.9529 12.1955 16.9529 11.9999C16.9529 11.8044 16.8765 11.6165 16.74 11.4764L8.967 3.50094C8.90341 3.43563 8.82737 3.38371 8.74338 3.34827C8.6594 3.31282 8.56916 3.29456 8.478 3.29456C8.38684 3.29456 8.2966 3.31282 8.21261 3.34827C8.12863 3.38371 8.05259 3.43563 7.989 3.50094V3.49944Z" fill="#716E7B" stroke="#716E7B"/>
-                          </svg></span><span style="color:#716E7B">${node.data._directSubordinatesPaging} </span></div>`,
+                      <path d="M14.283 3.50094L6.51 11.4749C6.37348 11.615 6.29707 11.8029 6.29707 11.9984C6.29707 12.194 6.37348 12.3819 6.51 12.5219L14.283 20.4989C14.3466 20.5643 14.4226 20.6162 14.5066 20.6516C14.5906 20.6871 14.6808 20.7053 14.772 20.7053C14.8632 20.7053 14.9534 20.6871 15.0374 20.6516C15.1214 20.6162 15.1974 20.5643 15.261 20.4989C15.3918 20.365 15.4651 20.1852 15.4651 19.9979C15.4651 19.8107 15.3918 19.6309 15.261 19.4969L7.9515 11.9984L15.261 4.50144C15.3914 4.36756 15.4643 4.18807 15.4643 4.00119C15.4643 3.81431 15.3914 3.63482 15.261 3.50094C15.1974 3.43563 15.1214 3.38371 15.0374 3.34827C14.9534 3.31282 14.8632 3.29456 14.772 3.29456C14.6808 3.29456 14.5906 3.31282 14.5066 3.34827C14.4226 3.38371 14.3466 3.43563 14.283 3.50094V3.50094Z" fill="currentColor" stroke="currentColor"/>
+                      </svg></span><span>${node.data._directSubordinatesPaging} </span></div>` : `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M7.989 3.49944C7.85817 3.63339 7.78492 3.8132 7.78492 4.00044C7.78492 4.18768 7.85817 4.36749 7.989 4.50144L15.2985 11.9999L7.989 19.4969C7.85817 19.6309 7.78492 19.8107 7.78492 19.9979C7.78492 20.1852 7.85817 20.365 7.989 20.4989C8.05259 20.5643 8.12863 20.6162 8.21261 20.6516C8.2966 20.6871 8.38684 20.7053 8.478 20.7053C8.56916 20.7053 8.6594 20.6871 8.74338 20.6516C8.82737 20.6162 8.90341 20.5643 8.967 20.4989L16.74 12.5234C16.8765 12.3834 16.9529 12.1955 16.9529 11.9999C16.9529 11.8044 16.8765 11.6165 16.74 11.4764L8.967 3.50094C8.90341 3.43563 8.82737 3.38371 8.74338 3.34827C8.6594 3.31282 8.56916 3.29456 8.478 3.29456C8.38684 3.29456 8.2966 3.31282 8.21261 3.34827C8.12863 3.38371 8.05259 3.43563 7.989 3.50094V3.49944Z" fill="currentColor" stroke="currentColor"/>
+                          </svg></span><span>${node.data._directSubordinatesPaging} </span></div>`,
             "bottom": (d) => d ? `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                       <path d="M19.497 7.98903L12 15.297L4.503 7.98903C4.36905 7.85819 4.18924 7.78495 4.002 7.78495C3.81476 7.78495 3.63495 7.85819 3.501 7.98903C3.43614 8.05257 3.38462 8.12842 3.34944 8.21213C3.31427 8.29584 3.29615 8.38573 3.29615 8.47653C3.29615 8.56733 3.31427 8.65721 3.34944 8.74092C3.38462 8.82463 3.43614 8.90048 3.501 8.96403L11.4765 16.74C11.6166 16.8765 11.8044 16.953 12 16.953C12.1956 16.953 12.3834 16.8765 12.5235 16.74L20.499 8.96553C20.5643 8.90193 20.6162 8.8259 20.6517 8.74191C20.6871 8.65792 20.7054 8.56769 20.7054 8.47653C20.7054 8.38537 20.6871 8.29513 20.6517 8.21114C20.6162 8.12715 20.5643 8.05112 20.499 7.98753C20.3651 7.85669 20.1852 7.78345 19.998 7.78345C19.8108 7.78345 19.6309 7.85669 19.497 7.98753V7.98903Z" fill="#716E7B" stroke="#716E7B"/>
-                       </svg></span><span style="margin-left:1px;color:#716E7B" >${node.data._directSubordinatesPaging} </span></div>
+                       <path d="M19.497 7.98903L12 15.297L4.503 7.98903C4.36905 7.85819 4.18924 7.78495 4.002 7.78495C3.81476 7.78495 3.63495 7.85819 3.501 7.98903C3.43614 8.05257 3.38462 8.12842 3.34944 8.21213C3.31427 8.29584 3.29615 8.38573 3.29615 8.47653C3.29615 8.56733 3.31427 8.65721 3.34944 8.74092C3.38462 8.82463 3.43614 8.90048 3.501 8.96403L11.4765 16.74C11.6166 16.8765 11.8044 16.953 12 16.953C12.1956 16.953 12.3834 16.8765 12.5235 16.74L20.499 8.96553C20.5643 8.90193 20.6162 8.8259 20.6517 8.74191C20.6871 8.65792 20.7054 8.56769 20.7054 8.47653C20.7054 8.38537 20.6871 8.29513 20.6517 8.21114C20.6162 8.12715 20.5643 8.05112 20.499 7.98753C20.3651 7.85669 20.1852 7.78345 19.998 7.78345C19.8108 7.78345 19.6309 7.85669 19.497 7.98753V7.98903Z" fill="currentColor" stroke="currentColor"/>
+                       </svg></span><span style="margin-left:1px">${node.data._directSubordinatesPaging} </span></div>
                        ` : `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                       <path d="M11.457 8.07005L3.49199 16.4296C3.35903 16.569 3.28485 16.7543 3.28485 16.9471C3.28485 17.1398 3.35903 17.3251 3.49199 17.4646L3.50099 17.4736C3.56545 17.5414 3.64304 17.5954 3.72904 17.6324C3.81504 17.6693 3.90765 17.6883 4.00124 17.6883C4.09483 17.6883 4.18745 17.6693 4.27344 17.6324C4.35944 17.5954 4.43703 17.5414 4.50149 17.4736L12.0015 9.60155L19.4985 17.4736C19.563 17.5414 19.6405 17.5954 19.7265 17.6324C19.8125 17.6693 19.9052 17.6883 19.9987 17.6883C20.0923 17.6883 20.1849 17.6693 20.2709 17.6324C20.3569 17.5954 20.4345 17.5414 20.499 17.4736L20.508 17.4646C20.641 17.3251 20.7151 17.1398 20.7151 16.9471C20.7151 16.7543 20.641 16.569 20.508 16.4296L12.543 8.07005C12.4729 7.99653 12.3887 7.93801 12.2954 7.89801C12.202 7.85802 12.1015 7.8374 12 7.8374C11.8984 7.8374 11.798 7.85802 11.7046 7.89801C11.6113 7.93801 11.527 7.99653 11.457 8.07005Z" fill="#716E7B" stroke="#716E7B"/>
-                       </svg></span><span style="margin-left:1px;color:#716E7B" >${node.data._directSubordinatesPaging} </span></div>
+                       <path d="M11.457 8.07005L3.49199 16.4296C3.35903 16.569 3.28485 16.7543 3.28485 16.9471C3.28485 17.1398 3.35903 17.3251 3.49199 17.4646L3.50099 17.4736C3.56545 17.5414 3.64304 17.5954 3.72904 17.6324C3.81504 17.6693 3.90765 17.6883 4.00124 17.6883C4.09483 17.6883 4.18745 17.6693 4.27344 17.6324C4.35944 17.5954 4.43703 17.5414 4.50149 17.4736L12.0015 9.60155L19.4985 17.4736C19.563 17.5414 19.6405 17.5954 19.7265 17.6324C19.8125 17.6693 19.9052 17.6883 19.9987 17.6883C20.0923 17.6883 20.1849 17.6693 20.2709 17.6324C20.3569 17.5954 20.4345 17.5414 20.499 17.4736L20.508 17.4646C20.641 17.3251 20.7151 17.1398 20.7151 16.9471C20.7151 16.7543 20.641 16.569 20.508 16.4296L12.543 8.07005C12.4729 7.99653 12.3887 7.93801 12.2954 7.89801C12.202 7.85802 12.1015 7.8374 12 7.8374C11.8984 7.8374 11.798 7.85802 11.7046 7.89801C11.6113 7.93801 11.527 7.99653 11.457 8.07005Z" fill="currentColor" stroke="currentColor"/>
+                       </svg></span><span style="margin-left:1px">${node.data._directSubordinatesPaging} </span></div>
                     `,
             "right": (d) => d ? `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                       <path d="M7.989 3.49944C7.85817 3.63339 7.78492 3.8132 7.78492 4.00044C7.78492 4.18768 7.85817 4.36749 7.989 4.50144L15.2985 11.9999L7.989 19.4969C7.85817 19.6309 7.78492 19.8107 7.78492 19.9979C7.78492 20.1852 7.85817 20.365 7.989 20.4989C8.05259 20.5643 8.12863 20.6162 8.21261 20.6516C8.2966 20.6871 8.38684 20.7053 8.478 20.7053C8.56916 20.7053 8.6594 20.6871 8.74338 20.6516C8.82737 20.6162 8.90341 20.5643 8.967 20.4989L16.74 12.5234C16.8765 12.3834 16.9529 12.1955 16.9529 11.9999C16.9529 11.8044 16.8765 11.6165 16.74 11.4764L8.967 3.50094C8.90341 3.43563 8.82737 3.38371 8.74338 3.34827C8.6594 3.31282 8.56916 3.29456 8.478 3.29456C8.38684 3.29456 8.2966 3.31282 8.21261 3.34827C8.12863 3.38371 8.05259 3.43563 7.989 3.50094V3.49944Z" fill="#716E7B" stroke="#716E7B"/>
-                       </svg></span><span style="color:#716E7B">${node.data._directSubordinatesPaging} </span></div>` : `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                       <path d="M14.283 3.50094L6.51 11.4749C6.37348 11.615 6.29707 11.8029 6.29707 11.9984C6.29707 12.194 6.37348 12.3819 6.51 12.5219L14.283 20.4989C14.3466 20.5643 14.4226 20.6162 14.5066 20.6516C14.5906 20.6871 14.6808 20.7053 14.772 20.7053C14.8632 20.7053 14.9534 20.6871 15.0374 20.6516C15.1214 20.6162 15.1974 20.5643 15.261 20.4989C15.3918 20.365 15.4651 20.1852 15.4651 19.9979C15.4651 19.8107 15.3918 19.6309 15.261 19.4969L7.9515 11.9984L15.261 4.50144C15.3914 4.36756 15.4643 4.18807 15.4643 4.00119C15.4643 3.81431 15.3914 3.63482 15.261 3.50094C15.1974 3.43563 15.1214 3.38371 15.0374 3.34827C14.9534 3.31282 14.8632 3.29456 14.772 3.29456C14.6808 3.29456 14.5906 3.31282 14.5066 3.34827C14.4226 3.38371 14.3466 3.43563 14.283 3.50094V3.50094Z" fill="#716E7B" stroke="#716E7B"/>
-                       </svg></span><span style="color:#716E7B">${node.data._directSubordinatesPaging} </span></div>`,
+                       <path d="M7.989 3.49944C7.85817 3.63339 7.78492 3.8132 7.78492 4.00044C7.78492 4.18768 7.85817 4.36749 7.989 4.50144L15.2985 11.9999L7.989 19.4969C7.85817 19.6309 7.78492 19.8107 7.78492 19.9979C7.78492 20.1852 7.85817 20.365 7.989 20.4989C8.05259 20.5643 8.12863 20.6162 8.21261 20.6516C8.2966 20.6871 8.38684 20.7053 8.478 20.7053C8.56916 20.7053 8.6594 20.6871 8.74338 20.6516C8.82737 20.6162 8.90341 20.5643 8.967 20.4989L16.74 12.5234C16.8765 12.3834 16.9529 12.1955 16.9529 11.9999C16.9529 11.8044 16.8765 11.6165 16.74 11.4764L8.967 3.50094C8.90341 3.43563 8.82737 3.38371 8.74338 3.34827C8.6594 3.31282 8.56916 3.29456 8.478 3.29456C8.38684 3.29456 8.2966 3.31282 8.21261 3.34827C8.12863 3.38371 8.05259 3.43563 7.989 3.50094V3.49944Z" fill="currentColor" stroke="currentColor"/>
+                       </svg></span><span>${node.data._directSubordinatesPaging} </span></div>` : `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                       <path d="M14.283 3.50094L6.51 11.4749C6.37348 11.615 6.29707 11.8029 6.29707 11.9984C6.29707 12.194 6.37348 12.3819 6.51 12.5219L14.283 20.4989C14.3466 20.5643 14.4226 20.6162 14.5066 20.6516C14.5906 20.6871 14.6808 20.7053 14.772 20.7053C14.8632 20.7053 14.9534 20.6871 15.0374 20.6516C15.1214 20.6162 15.1974 20.5643 15.261 20.4989C15.3918 20.365 15.4651 20.1852 15.4651 19.9979C15.4651 19.8107 15.3918 19.6309 15.261 19.4969L7.9515 11.9984L15.261 4.50144C15.3914 4.36756 15.4643 4.18807 15.4643 4.00119C15.4643 3.81431 15.3914 3.63482 15.261 3.50094C15.1974 3.43563 15.1214 3.38371 15.0374 3.34827C14.9534 3.31282 14.8632 3.29456 14.772 3.29456C14.6808 3.29456 14.5906 3.31282 14.5066 3.34827C14.4226 3.38371 14.3466 3.43563 14.283 3.50094V3.50094Z" fill="currentColor" stroke="currentColor"/>
+                       </svg></span><span>${node.data._directSubordinatesPaging} </span></div>`,
             "top": (d) => d ? `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M11.457 8.07005L3.49199 16.4296C3.35903 16.569 3.28485 16.7543 3.28485 16.9471C3.28485 17.1398 3.35903 17.3251 3.49199 17.4646L3.50099 17.4736C3.56545 17.5414 3.64304 17.5954 3.72904 17.6324C3.81504 17.6693 3.90765 17.6883 4.00124 17.6883C4.09483 17.6883 4.18745 17.6693 4.27344 17.6324C4.35944 17.5954 4.43703 17.5414 4.50149 17.4736L12.0015 9.60155L19.4985 17.4736C19.563 17.5414 19.6405 17.5954 19.7265 17.6324C19.8125 17.6693 19.9052 17.6883 19.9987 17.6883C20.0923 17.6883 20.1849 17.6693 20.2709 17.6324C20.3569 17.5954 20.4345 17.5414 20.499 17.4736L20.508 17.4646C20.641 17.3251 20.7151 17.1398 20.7151 16.9471C20.7151 16.7543 20.641 16.569 20.508 16.4296L12.543 8.07005C12.4729 7.99653 12.3887 7.93801 12.2954 7.89801C12.202 7.85802 12.1015 7.8374 12 7.8374C11.8984 7.8374 11.798 7.85802 11.7046 7.89801C11.6113 7.93801 11.527 7.99653 11.457 8.07005Z" fill="#716E7B" stroke="#716E7B"/>
-                        </svg></span><span style="margin-left:1px;color:#716E7B">${node.data._directSubordinatesPaging} </span></div>
+                        <path d="M11.457 8.07005L3.49199 16.4296C3.35903 16.569 3.28485 16.7543 3.28485 16.9471C3.28485 17.1398 3.35903 17.3251 3.49199 17.4646L3.50099 17.4736C3.56545 17.5414 3.64304 17.5954 3.72904 17.6324C3.81504 17.6693 3.90765 17.6883 4.00124 17.6883C4.09483 17.6883 4.18745 17.6693 4.27344 17.6324C4.35944 17.5954 4.43703 17.5414 4.50149 17.4736L12.0015 9.60155L19.4985 17.4736C19.563 17.5414 19.6405 17.5954 19.7265 17.6324C19.8125 17.6693 19.9052 17.6883 19.9987 17.6883C20.0923 17.6883 20.1849 17.6693 20.2709 17.6324C20.3569 17.5954 20.4345 17.5414 20.499 17.4736L20.508 17.4646C20.641 17.3251 20.7151 17.1398 20.7151 16.9471C20.7151 16.7543 20.641 16.569 20.508 16.4296L12.543 8.07005C12.4729 7.99653 12.3887 7.93801 12.2954 7.89801C12.202 7.85802 12.1015 7.8374 12 7.8374C11.8984 7.8374 11.798 7.85802 11.7046 7.89801C11.6113 7.93801 11.527 7.99653 11.457 8.07005Z" fill="currentColor" stroke="currentColor"/>
+                        </svg></span><span style="margin-left:1px">${node.data._directSubordinatesPaging} </span></div>
                         ` : `<div style="display:flex;"><span style="align-items:center;display:flex;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M19.497 7.98903L12 15.297L4.503 7.98903C4.36905 7.85819 4.18924 7.78495 4.002 7.78495C3.81476 7.78495 3.63495 7.85819 3.501 7.98903C3.43614 8.05257 3.38462 8.12842 3.34944 8.21213C3.31427 8.29584 3.29615 8.38573 3.29615 8.47653C3.29615 8.56733 3.31427 8.65721 3.34944 8.74092C3.38462 8.82463 3.43614 8.90048 3.501 8.96403L11.4765 16.74C11.6166 16.8765 11.8044 16.953 12 16.953C12.1956 16.953 12.3834 16.8765 12.5235 16.74L20.499 8.96553C20.5643 8.90193 20.6162 8.8259 20.6517 8.74191C20.6871 8.65792 20.7054 8.56769 20.7054 8.47653C20.7054 8.38537 20.6871 8.29513 20.6517 8.21114C20.6162 8.12715 20.5643 8.05112 20.499 7.98753C20.3651 7.85669 20.1852 7.78345 19.998 7.78345C19.8108 7.78345 19.6309 7.85669 19.497 7.98753V7.98903Z" fill="#716E7B" stroke="#716E7B"/>
-                        </svg></span><span style="margin-left:1px;color:#716E7B">${node.data._directSubordinatesPaging} </span></div>
+                        <path d="M19.497 7.98903L12 15.297L4.503 7.98903C4.36905 7.85819 4.18924 7.78495 4.002 7.78495C3.81476 7.78495 3.63495 7.85819 3.501 7.98903C3.43614 8.05257 3.38462 8.12842 3.34944 8.21213C3.31427 8.29584 3.29615 8.38573 3.29615 8.47653C3.29615 8.56733 3.31427 8.65721 3.34944 8.74092C3.38462 8.82463 3.43614 8.90048 3.501 8.96403L11.4765 16.74C11.6166 16.8765 11.8044 16.953 12 16.953C12.1956 16.953 12.3834 16.8765 12.5235 16.74L20.499 8.96553C20.5643 8.90193 20.6162 8.8259 20.6517 8.74191C20.6871 8.65792 20.7054 8.56769 20.7054 8.47653C20.7054 8.38537 20.6871 8.29513 20.6517 8.21114C20.6162 8.12715 20.5643 8.05112 20.499 7.98753C20.3651 7.85669 20.1852 7.78345 19.998 7.78345C19.8108 7.78345 19.6309 7.85669 19.497 7.98753V7.98903Z" fill="currentColor" stroke="currentColor"/>
+                        </svg></span><span style="margin-left:1px">${node.data._directSubordinatesPaging} </span></div>
                     `
           };
-          return `<div style="border:1px solid #E4E2E9;border-radius:3px;padding:3px;font-size:9px;margin:auto auto;background-color:white"> ${icons[state.layout](node.children)}  </div>`;
+          return `<div style="border:1px solid var(--oc-button-border-color, #E4E2E9);border-radius:3px;padding:3px;font-size:9px;margin:auto auto;background-color:var(--oc-button-background, white);color:var(--oc-button-color, #716E7B)"> ${icons[state.effectiveLayout || state.layout](node.children)}  </div>`;
         },
         /* Node paging button content and styling. You can access same helper methods as above. */
         pagingButton: (d, i, arr, state) => {
@@ -4320,9 +4332,9 @@ var __d3OrgChart = (() => {
           const min2 = Math.min(diff, step);
           return `
                    <div style="margin-top:90px;">
-                      <div style="display:flex;width:170px;border-radius:20px;padding:5px 15px; padding-bottom:4px;;background-color:#E5E9F2">
+                      <div style="display:flex;width:170px;border-radius:20px;padding:5px 15px; padding-bottom:4px;background-color:var(--oc-paging-background, #E5E9F2);color:var(--oc-paging-color, #716E7B)">
                       <div><svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M5.59 7.41L10.18 12L5.59 16.59L7 18L13 12L7 6L5.59 7.41ZM16 6H18V18H16V6Z" fill="#716E7B" stroke="#716E7B"/>
+                      <path d="M5.59 7.41L10.18 12L5.59 16.59L7 18L13 12L7 6L5.59 7.41ZM16 6H18V18H16V6Z" fill="currentColor" stroke="currentColor"/>
                       </svg>
                       </div><div style="line-height:2"> Show next ${min2}  nodes </div></div>
                    </div>
@@ -4330,7 +4342,7 @@ var __d3OrgChart = (() => {
         },
         /* You can access and modify actual node DOM element in runtime using this method. */
         nodeUpdate: function(d, i, arr) {
-          d3.select(this).select(".node-rect").attr("stroke", (d2) => d2.data._highlighted || d2.data._upToTheRootHighlighted ? "#E27396" : "none").attr("stroke-width", d.data._highlighted || d.data._upToTheRootHighlighted ? 10 : 1);
+          d3.select(this).select(".node-rect").style("stroke", (d2) => d2.data._highlighted || d2.data._upToTheRootHighlighted ? "var(--oc-highlight-color, #E27396)" : "none").attr("stroke-width", d.data._highlighted || d.data._upToTheRootHighlighted ? 10 : 1);
         },
         nodeEnter: (d) => d,
         // Custom handling of node update
@@ -4338,7 +4350,7 @@ var __d3OrgChart = (() => {
         // Custom handling of exit node
         /* You can access and modify actual link DOM element in runtime using this method. */
         linkUpdate: function(d, i, arr) {
-          d3.select(this).attr("stroke", (d2) => d2.data._upToTheRootHighlighted ? "#E27396" : "#E4E2E9").attr("stroke-width", (d2) => d2.data._upToTheRootHighlighted ? 5 : 1);
+          d3.select(this).style("stroke", (d2) => d2.data._upToTheRootHighlighted ? "var(--oc-highlight-color, #E27396)" : "var(--oc-link-color, #E4E2E9)").attr("stroke-width", (d2) => d2.data._upToTheRootHighlighted ? 5 : 1);
           if (d.data._upToTheRootHighlighted) {
             d3.select(this).raise();
           }
@@ -4408,12 +4420,12 @@ var __d3OrgChart = (() => {
             const labelWidth = this.getTextWidth(conn.label, { ctx: state.ctx, fontSize: 2, defaultFont: state.defaultFont });
             return `
                        <marker id="${toSafeId(conn.from + "_" + conn.to)}" refX="${conn._source.x < conn._target.x ? -7 : 7}" refY="5" markerWidth="500"  markerHeight="500"  orient="${conn._source.x < conn._target.x ? "auto" : "auto-start-reverse"}" >
-                       <rect rx=0.5 width=${conn.label ? labelWidth + 3 : 0} height=3 y=1  fill="#E27396"></rect>
-                       <text font-size="2px" x=1 fill="white" y=3>${escapeHtml(conn.label || "")}</text>
+                       <rect rx=0.5 width=${conn.label ? labelWidth + 3 : 0} height=3 y=1 style="fill:var(--oc-connection-color, #E27396)"></rect>
+                       <text font-size="2px" x=1 y=3 style="fill:var(--oc-connection-label-color, white)">${escapeHtml(conn.label || "")}</text>
                        </marker>
 
                        <marker id="arrow-${toSafeId(conn.from + "_" + conn.to)}"  markerWidth="500"  markerHeight="500"  refY="2"  refX="1" orient="${conn._source.x < conn._target.x ? "auto" : "auto-start-reverse"}" >
-                       <path transform="translate(0)" d='M0,0 V4 L2,2 Z' fill='#E27396' />
+                       <path transform="translate(0)" d='M0,0 V4 L2,2 Z' style="fill:var(--oc-connection-color, #E27396)" />
                        </marker>
                     `;
           }).join("")}
@@ -4422,7 +4434,7 @@ var __d3OrgChart = (() => {
         },
         /* You can update connections with custom styling using this function */
         connectionsUpdate: function(d, i, arr) {
-          d3.select(this).attr("stroke", (d2) => "#E27396").attr("stroke-linecap", "round").attr("stroke-width", (d2) => "5").attr("pointer-events", "none").attr("marker-start", (d2) => `url(#${toSafeId(d2.from + "_" + d2.to)})`).attr("marker-end", (d2) => `url(#arrow-${toSafeId(d2.from + "_" + d2.to)})`);
+          d3.select(this).style("stroke", "var(--oc-connection-color, #E27396)").attr("stroke-linecap", "round").attr("stroke-width", (d2) => "5").attr("pointer-events", "none").attr("marker-start", (d2) => `url(#${toSafeId(d2.from + "_" + d2.to)})`).attr("marker-end", (d2) => `url(#arrow-${toSafeId(d2.from + "_" + d2.to)})`);
         },
         // Link generator for connections
         linkGroupArc: d3.linkHorizontal().x((d) => d.x).y((d) => d.y),
@@ -4489,9 +4501,9 @@ var __d3OrgChart = (() => {
             "nodeJoinY": (node) => node.y + node.height,
             "linkJoinX": (node) => node.x,
             "linkJoinY": (node) => node.y + node.height,
-            "linkCompactXStart": (node) => node.x + (node.compactEven ? node.width / 2 : -node.width / 2),
+            "linkCompactXStart": (node) => node.x + attrs.rtlSign * (node.compactEven ? node.width / 2 : -node.width / 2),
             "linkCompactYStart": (node) => node.y + node.height / 2,
-            "compactLinkMidX": (node, state) => node.firstCompactNode.x + node.firstCompactNode.flexCompactDim[0] / 4 + state.compactMarginPair(node) / 4,
+            "compactLinkMidX": (node, state) => node.firstCompactNode.x + attrs.rtlSign * (node.firstCompactNode.flexCompactDim[0] / 4 + state.compactMarginPair(node) / 4),
             "compactLinkMidY": (node) => node.firstCompactNode.y,
             "compactDimension": {
               sizeColumn: (node) => node.width,
@@ -4528,9 +4540,9 @@ var __d3OrgChart = (() => {
             "nodeJoinY": (node) => node.y - node.height - node.height,
             "linkJoinX": (node) => node.x,
             "linkJoinY": (node) => node.y - node.height,
-            "linkCompactXStart": (node) => node.x + (node.compactEven ? node.width / 2 : -node.width / 2),
+            "linkCompactXStart": (node) => node.x + attrs.rtlSign * (node.compactEven ? node.width / 2 : -node.width / 2),
             "linkCompactYStart": (node) => node.y - node.height / 2,
-            "compactLinkMidX": (node, state) => node.firstCompactNode.x + node.firstCompactNode.flexCompactDim[0] / 4 + state.compactMarginPair(node) / 4,
+            "compactLinkMidX": (node, state) => node.firstCompactNode.x + attrs.rtlSign * (node.firstCompactNode.flexCompactDim[0] / 4 + state.compactMarginPair(node) / 4),
             "compactLinkMidY": (node) => node.firstCompactNode.y,
             "linkX": (node) => node.x,
             "linkY": (node) => node.y,
@@ -4667,6 +4679,20 @@ var __d3OrgChart = (() => {
       }
       console.warn(`ORG CHART - ${message}`);
     }
+    // Resolves rtl and the layout that is actually drawn: in right-to-left, "left" and "right" swap
+    // and top / bottom layouts are mirrored horizontally
+    resolveDirection() {
+      const attrs = this.getChartState();
+      let rtl = attrs.rtl;
+      if (rtl === "auto") {
+        const node = d3.select(attrs.container).node();
+        rtl = !!node && getComputedStyle(node).direction === "rtl";
+      }
+      attrs.isRtl = !!rtl;
+      attrs.effectiveLayout = attrs.isRtl ? { left: "right", right: "left" }[attrs.layout] || attrs.layout : attrs.layout;
+      attrs.rtlSign = attrs.isRtl && (attrs.layout === "top" || attrs.layout === "bottom") ? -1 : 1;
+      return this;
+    }
     // Returns false (and reports it) when an action needs a rendered chart but render() has not run yet
     isRendered(action) {
       if (this.getChartState().svg) return true;
@@ -4715,6 +4741,7 @@ var __d3OrgChart = (() => {
         return this;
       }
       const container = d3.select(this.getContainerNode());
+      this.resolveDirection();
       const { width: chartWidth, height: chartHeight } = this.getChartSize();
       const calc = {
         id: `ID${Math.floor(Math.random() * 1e6)}`,
@@ -4742,7 +4769,7 @@ var __d3OrgChart = (() => {
           const height = attrs.nodeHeight(node);
           const siblingsMargin = attrs.siblingsMargin(node);
           const childrenMargin = attrs.childrenMargin(node);
-          return attrs.layoutBindings[attrs.layout].nodeFlexSize({
+          return attrs.layoutBindings[attrs.effectiveLayout].nodeFlexSize({
             state: attrs,
             node,
             width,
@@ -4756,7 +4783,7 @@ var __d3OrgChart = (() => {
       const svg = container.patternify({
         tag: "svg",
         selector: "svg-chart-container"
-      }).attr("width", calc.chartWidth).attr("height", calc.chartHeight).attr("font-family", attrs.defaultFont).style("display", "block");
+      }).attr("width", calc.chartWidth).attr("height", calc.chartHeight).style("font-family", `var(--oc-font-family, ${attrs.defaultFont})`).style("display", "block");
       if (attrs.firstDraw) {
         svg.call(attrs.zoomBehavior).on("dblclick.zoom", null).attr("cursor", "move");
       }
@@ -4772,22 +4799,32 @@ var __d3OrgChart = (() => {
       attrs.linksWrapper = attrs.centerG.patternify({
         tag: "g",
         selector: "links-wrapper"
-      });
+      }).attr("aria-hidden", "true");
       attrs.nodesWrapper = attrs.centerG.patternify({
         tag: "g",
         selector: "nodes-wrapper"
-      });
+      }).attr("role", "tree").attr("aria-label", attrs.ariaLabel);
       attrs.connectionsWrapper = attrs.centerG.patternify({
         tag: "g",
         selector: "connections-wrapper"
-      });
+      }).attr("aria-hidden", "true");
+      svg.patternify({
+        tag: "style",
+        selector: "org-chart-styles"
+      }).text(`
+                .svg-chart-container g.node:focus { outline: none; }
+                .svg-chart-container g.node:focus-visible > .node-rect {
+                    stroke: var(--oc-focus-color, #1068EB) !important;
+                    stroke-width: 3px !important;
+                }
+            `);
       attrs.defsWrapper = svg.patternify({
         tag: "g",
         selector: "defs-wrapper"
       });
       if (attrs.firstDraw) {
         attrs.centerG.attr("transform", () => {
-          return attrs.layoutBindings[attrs.layout].centerTransform({
+          return attrs.layoutBindings[attrs.effectiveLayout].centerTransform({
             centerX: calc.centerX,
             centerY: calc.centerY,
             scale: attrs.lastTransform.k,
@@ -4887,10 +4924,10 @@ var __d3OrgChart = (() => {
             else child.compactEven = true;
             child.row = Math.floor(i / 2);
           });
-          const evenMaxColumnDimension = d3.max(compactChildren.filter((d) => d.compactEven), attrs.layoutBindings[attrs.layout].compactDimension.sizeColumn);
-          const oddMaxColumnDimension = d3.max(compactChildren.filter((d) => !d.compactEven), attrs.layoutBindings[attrs.layout].compactDimension.sizeColumn);
+          const evenMaxColumnDimension = d3.max(compactChildren.filter((d) => d.compactEven), attrs.layoutBindings[attrs.effectiveLayout].compactDimension.sizeColumn);
+          const oddMaxColumnDimension = d3.max(compactChildren.filter((d) => !d.compactEven), attrs.layoutBindings[attrs.effectiveLayout].compactDimension.sizeColumn);
           const columnSize = Math.max(evenMaxColumnDimension, oddMaxColumnDimension) * 2;
-          const rowsMapNew = this.groupBy(compactChildren, (d) => d.row, (reducedGroup) => d3.max(reducedGroup, (d) => attrs.layoutBindings[attrs.layout].compactDimension.sizeRow(d) + attrs.compactMarginBetween(d)));
+          const rowsMapNew = this.groupBy(compactChildren, (d) => d.row, (reducedGroup) => d3.max(reducedGroup, (d) => attrs.layoutBindings[attrs.effectiveLayout].compactDimension.sizeRow(d) + attrs.compactMarginBetween(d)));
           const rowSize = d3.sum(rowsMapNew.map((v) => v[1]));
           compactChildren.forEach((node2) => {
             node2.firstCompactNode = compactChildren[0];
@@ -4925,7 +4962,7 @@ var __d3OrgChart = (() => {
           if (Math.abs(offsetX) < 10) {
             compactChildren.forEach((d) => d.x += offsetX);
           }
-          const rowsMapNew = this.groupBy(compactChildren, (d) => d.row, (reducedGroup) => d3.max(reducedGroup, (d) => attrs.layoutBindings[attrs.layout].compactDimension.sizeRow(d)));
+          const rowsMapNew = this.groupBy(compactChildren, (d) => d.row, (reducedGroup) => d3.max(reducedGroup, (d) => attrs.layoutBindings[attrs.effectiveLayout].compactDimension.sizeRow(d)));
           const cumSum = d3.cumsum(rowsMapNew.map((d) => d[1] + attrs.compactMarginBetween(d)));
           compactChildren.forEach((node2, i) => {
             if (node2.row) {
@@ -4941,6 +4978,7 @@ var __d3OrgChart = (() => {
     update({ x0, y0, x: x2 = 0, y: y2 = 0, width, height }) {
       const attrs = this.getChartState();
       const calc = attrs.calc;
+      this.resolveDirection();
       if (attrs.compact) {
         this.calculateCompactFlexDimensions(attrs.root);
       }
@@ -4950,7 +4988,12 @@ var __d3OrgChart = (() => {
       }
       const nodes = treeData.descendants();
       const links = treeData.descendants().slice(1);
-      nodes.forEach(attrs.layoutBindings[attrs.layout].swap);
+      nodes.forEach(attrs.layoutBindings[attrs.effectiveLayout].swap);
+      if (attrs.rtlSign === -1) {
+        nodes.forEach((d) => {
+          d.x = -d.x;
+        });
+      }
       const connections = attrs.connections;
       const allNodesMap = {};
       attrs.allNodes.forEach((d) => allNodesMap[attrs.nodeId(d.data)] = d);
@@ -4970,10 +5013,10 @@ var __d3OrgChart = (() => {
       }
       const linkSelection = attrs.linksWrapper.selectAll("path.link").data(links, (d) => attrs.nodeId(d.data));
       const linkEnter = linkSelection.enter().insert("path", "g").attr("class", "link").attr("d", (d) => {
-        const xo = attrs.layoutBindings[attrs.layout].linkJoinX({ x: x0, y: y0, width, height });
-        const yo = attrs.layoutBindings[attrs.layout].linkJoinY({ x: x0, y: y0, width, height });
+        const xo = attrs.layoutBindings[attrs.effectiveLayout].linkJoinX({ x: x0, y: y0, width, height });
+        const yo = attrs.layoutBindings[attrs.effectiveLayout].linkJoinY({ x: x0, y: y0, width, height });
         const o = { x: xo, y: yo };
-        return attrs.layoutBindings[attrs.layout].diagonal(o, o, o);
+        return attrs.layoutBindings[attrs.effectiveLayout].diagonal(o, o, o);
       });
       const linkUpdate = linkEnter.merge(linkSelection);
       linkUpdate.attr("fill", "none");
@@ -4981,42 +5024,42 @@ var __d3OrgChart = (() => {
       linkUpdate.each(attrs.linkUpdate);
       linkUpdate.transition().duration(attrs.duration).attr("d", (d) => {
         const n = attrs.compact && d.flexCompactDim ? {
-          x: attrs.layoutBindings[attrs.layout].compactLinkMidX(d, attrs),
-          y: attrs.layoutBindings[attrs.layout].compactLinkMidY(d, attrs)
+          x: attrs.layoutBindings[attrs.effectiveLayout].compactLinkMidX(d, attrs),
+          y: attrs.layoutBindings[attrs.effectiveLayout].compactLinkMidY(d, attrs)
         } : {
-          x: attrs.layoutBindings[attrs.layout].linkX(d),
-          y: attrs.layoutBindings[attrs.layout].linkY(d)
+          x: attrs.layoutBindings[attrs.effectiveLayout].linkX(d),
+          y: attrs.layoutBindings[attrs.effectiveLayout].linkY(d)
         };
         const p = {
-          x: attrs.layoutBindings[attrs.layout].linkParentX(d),
-          y: attrs.layoutBindings[attrs.layout].linkParentY(d)
+          x: attrs.layoutBindings[attrs.effectiveLayout].linkParentX(d),
+          y: attrs.layoutBindings[attrs.effectiveLayout].linkParentY(d)
         };
         const m = attrs.compact && d.flexCompactDim ? {
-          x: attrs.layoutBindings[attrs.layout].linkCompactXStart(d),
-          y: attrs.layoutBindings[attrs.layout].linkCompactYStart(d)
+          x: attrs.layoutBindings[attrs.effectiveLayout].linkCompactXStart(d),
+          y: attrs.layoutBindings[attrs.effectiveLayout].linkCompactYStart(d)
         } : n;
-        return attrs.layoutBindings[attrs.layout].diagonal(n, p, m, { sy: attrs.linkYOffset });
+        return attrs.layoutBindings[attrs.effectiveLayout].diagonal(n, p, m, { sy: attrs.linkYOffset });
       });
       const linkExit = linkSelection.exit().transition().duration(attrs.duration).attr("d", (d) => {
-        const xo = attrs.layoutBindings[attrs.layout].linkJoinX({ x: x2, y: y2, width, height });
-        const yo = attrs.layoutBindings[attrs.layout].linkJoinY({ x: x2, y: y2, width, height });
+        const xo = attrs.layoutBindings[attrs.effectiveLayout].linkJoinX({ x: x2, y: y2, width, height });
+        const yo = attrs.layoutBindings[attrs.effectiveLayout].linkJoinY({ x: x2, y: y2, width, height });
         const o = { x: xo, y: yo };
-        return attrs.layoutBindings[attrs.layout].diagonal(o, o, null, { sy: attrs.linkYOffset });
+        return attrs.layoutBindings[attrs.effectiveLayout].diagonal(o, o, null, { sy: attrs.linkYOffset });
       }).remove();
       const connectionsSel = attrs.connectionsWrapper.selectAll("path.connection").data(visibleConnections);
       const connEnter = connectionsSel.enter().insert("path", "g").attr("class", "connection").attr("d", (d) => {
-        const xo = attrs.layoutBindings[attrs.layout].linkJoinX({ x: x0, y: y0, width, height });
-        const yo = attrs.layoutBindings[attrs.layout].linkJoinY({ x: x0, y: y0, width, height });
+        const xo = attrs.layoutBindings[attrs.effectiveLayout].linkJoinX({ x: x0, y: y0, width, height });
+        const yo = attrs.layoutBindings[attrs.effectiveLayout].linkJoinY({ x: x0, y: y0, width, height });
         const o = { x: xo, y: yo };
-        return attrs.layoutBindings[attrs.layout].diagonal(o, o, null, { sy: attrs.linkYOffset });
+        return attrs.layoutBindings[attrs.effectiveLayout].diagonal(o, o, null, { sy: attrs.linkYOffset });
       });
       const connUpdate = connEnter.merge(connectionsSel);
       connUpdate.attr("fill", "none");
       connUpdate.transition().duration(attrs.duration).attr("d", (d) => {
-        const xs = attrs.layoutBindings[attrs.layout].linkX({ x: d._source.x, y: d._source.y, width: d._source.width, height: d._source.height });
-        const ys = attrs.layoutBindings[attrs.layout].linkY({ x: d._source.x, y: d._source.y, width: d._source.width, height: d._source.height });
-        const xt = attrs.layoutBindings[attrs.layout].linkJoinX({ x: d._target.x, y: d._target.y, width: d._target.width, height: d._target.height });
-        const yt = attrs.layoutBindings[attrs.layout].linkJoinY({ x: d._target.x, y: d._target.y, width: d._target.width, height: d._target.height });
+        const xs = attrs.layoutBindings[attrs.effectiveLayout].linkX({ x: d._source.x, y: d._source.y, width: d._source.width, height: d._source.height });
+        const ys = attrs.layoutBindings[attrs.effectiveLayout].linkY({ x: d._source.x, y: d._source.y, width: d._source.width, height: d._source.height });
+        const xt = attrs.layoutBindings[attrs.effectiveLayout].linkJoinX({ x: d._target.x, y: d._target.y, width: d._target.width, height: d._target.height });
+        const yt = attrs.layoutBindings[attrs.effectiveLayout].linkJoinY({ x: d._target.x, y: d._target.y, width: d._target.width, height: d._target.height });
         return attrs.linkGroupArc({ source: { x: xs, y: ys }, target: { x: xt, y: yt } });
       });
       connUpdate.each(attrs.connectionsUpdate);
@@ -5024,11 +5067,12 @@ var __d3OrgChart = (() => {
       const nodesSelection = attrs.nodesWrapper.selectAll("g.node").data(nodes, ({ data }) => attrs.nodeId(data));
       const nodeEnter = nodesSelection.enter().append("g").attr("class", "node").attr("transform", (d) => {
         if (d == attrs.root) return `translate(${x0},${y0})`;
-        const xj = attrs.layoutBindings[attrs.layout].nodeJoinX({ x: x0, y: y0, width, height });
-        const yj = attrs.layoutBindings[attrs.layout].nodeJoinY({ x: x0, y: y0, width, height });
+        const xj = attrs.layoutBindings[attrs.effectiveLayout].nodeJoinX({ x: x0, y: y0, width, height });
+        const yj = attrs.layoutBindings[attrs.effectiveLayout].nodeJoinY({ x: x0, y: y0, width, height });
         return `translate(${xj},${yj})`;
       }).attr("cursor", "pointer").on("click.node", (event, node) => {
         const { data } = node;
+        attrs.focusedNodeId = attrs.nodeId(data);
         if (event.target.closest(".node-button-g")) {
           return;
         }
@@ -5039,28 +5083,14 @@ var __d3OrgChart = (() => {
         if (!data._pagingButton) {
           attrs.onNodeClick(node, event);
         }
-      }).on("keydown.node", (event, node) => {
-        const { data } = node;
-        if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
-          if (event.target.closest(".node-button-g")) {
-            return;
-          }
-          if (event.target.closest(".paging-button-wrapper")) {
-            this.loadPagingNodes(node);
-            return;
-          }
-          if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
-            this.onButtonClick(event, node);
-          }
-        }
-      });
+      }).on("keydown.node", (event, node) => this.onNodeKeydown(event, node));
       nodeEnter.each(attrs.nodeEnter);
       nodeEnter.patternify({
         tag: "rect",
         selector: "node-rect",
         data: (d) => [d]
       });
-      const nodeUpdate = nodeEnter.merge(nodesSelection).style("font", "12px sans-serif");
+      const nodeUpdate = nodeEnter.merge(nodesSelection).style("font-size", "12px");
       const fo = nodeUpdate.patternify({
         tag: "foreignObject",
         selector: "node-foreign-object",
@@ -5076,11 +5106,7 @@ var __d3OrgChart = (() => {
         tag: "g",
         selector: "node-button-g",
         data: (d) => [d]
-      }).on("click", (event, d) => this.onButtonClick(event, d)).on("keydown", (event, d) => {
-        if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
-          this.onButtonClick(event, d);
-        }
-      });
+      }).attr("aria-hidden", "true").on("click", (event, d) => this.onButtonClick(event, d));
       nodeButtonGroups.patternify({
         tag: "rect",
         selector: "node-button-rect",
@@ -5096,12 +5122,12 @@ var __d3OrgChart = (() => {
         data: (d) => [d]
       }).style("pointer-events", "none").style("display", "flex").style("width", "100%").style("height", "100%");
       nodeUpdate.transition().attr("opacity", 0).duration(attrs.duration).attr("transform", ({ x: x3, y: y3, width: width2, height: height2 }) => {
-        return attrs.layoutBindings[attrs.layout].nodeUpdateTransform({ x: x3, y: y3, width: width2, height: height2 });
+        return attrs.layoutBindings[attrs.effectiveLayout].nodeUpdateTransform({ x: x3, y: y3, width: width2, height: height2 });
       }).attr("opacity", 1);
-      nodeUpdate.select(".node-rect").attr("width", ({ width: width2 }) => width2).attr("height", ({ height: height2 }) => height2).attr("x", ({ width: width2 }) => 0).attr("y", ({ height: height2 }) => 0).attr("cursor", "pointer").attr("rx", 3).attr("fill", attrs.nodeDefaultBackground);
+      nodeUpdate.select(".node-rect").attr("width", ({ width: width2 }) => width2).attr("height", ({ height: height2 }) => height2).attr("x", ({ width: width2 }) => 0).attr("y", ({ height: height2 }) => 0).attr("cursor", "pointer").attr("rx", 3).style("fill", attrs.nodeDefaultBackground);
       nodeUpdate.select(".node-button-g").attr("transform", ({ data, width: width2, height: height2 }) => {
-        const x3 = attrs.layoutBindings[attrs.layout].buttonX({ width: width2, height: height2 });
-        const y3 = attrs.layoutBindings[attrs.layout].buttonY({ width: width2, height: height2 });
+        const x3 = attrs.layoutBindings[attrs.effectiveLayout].buttonX({ width: width2, height: height2 });
+        const y3 = attrs.layoutBindings[attrs.effectiveLayout].buttonY({ width: width2, height: height2 });
         return `translate(${x3},${y3})`;
       }).attr("display", ({ data }) => {
         return data._directSubordinates > 0 ? null : "none";
@@ -5125,13 +5151,14 @@ var __d3OrgChart = (() => {
         return "+";
       }).attr("y", 0);
       nodeUpdate.each(attrs.nodeUpdate);
+      this.updateAccessibility(nodeUpdate);
       const nodeExitTransition = nodesSelection.exit();
       nodeExitTransition.each(attrs.nodeExit);
       const maxDepthNode = nodeExitTransition.data().reduce((a, b) => a.depth < b.depth ? a : b, { depth: Infinity });
       nodeExitTransition.attr("opacity", 1).transition().duration(attrs.duration).attr("transform", (d) => {
         let { x: x3, y: y3, width: width2, height: height2 } = maxDepthNode.parent || {};
-        const ex = attrs.layoutBindings[attrs.layout].nodeJoinX({ x: x3, y: y3, width: width2, height: height2 });
-        const ey = attrs.layoutBindings[attrs.layout].nodeJoinY({ x: x3, y: y3, width: width2, height: height2 });
+        const ex = attrs.layoutBindings[attrs.effectiveLayout].nodeJoinX({ x: x3, y: y3, width: width2, height: height2 });
+        const ey = attrs.layoutBindings[attrs.effectiveLayout].nodeJoinY({ x: x3, y: y3, width: width2, height: height2 });
         return `translate(${ex},${ey})`;
       }).on("end", function() {
         d3.select(this).remove();
@@ -5186,6 +5213,105 @@ var __d3OrgChart = (() => {
         return attrs.nodeContent.bind(this)(d, i, arr, attrs);
       });
     }
+    // Sets ARIA tree semantics and the roving tabindex on rendered nodes
+    updateAccessibility(nodeUpdate) {
+      const attrs = this.getChartState();
+      const focusTarget = this.getFocusTarget();
+      nodeUpdate.attr("role", "treeitem").attr("aria-level", (d) => d.depth + 1).attr("aria-setsize", (d) => d.parent ? d.parent.children.length : 1).attr("aria-posinset", (d) => d.parent ? d.parent.children.indexOf(d) + 1 : 1).attr("aria-expanded", (d) => d.children ? "true" : d._children ? "false" : null).attr("aria-selected", (d) => d.data._highlighted ? "true" : null).attr("tabindex", (d) => d === focusTarget ? 0 : -1).attr("aria-label", function(d) {
+        if (attrs.nodeAriaLabel) return attrs.nodeAriaLabel(d);
+        const content = this.querySelector(".node-foreign-object-div");
+        return content ? content.textContent.replace(/\s+/g, " ").trim() : null;
+      });
+    }
+    // The visible node that should be focusable: the focused node, its closest visible ancestor, or the root
+    getFocusTarget() {
+      const attrs = this.getChartState();
+      if (!attrs.root) return null;
+      const visible = this.getVisibleNodes();
+      if (attrs.focusedNodeId != null) {
+        let node = attrs.allNodes.find((d) => attrs.nodeId(d.data) == attrs.focusedNodeId);
+        while (node) {
+          if (visible.includes(node)) return node;
+          node = node.parent;
+        }
+      }
+      return attrs.root;
+    }
+    // Visible nodes in depth-first order (the reading order of the tree)
+    getVisibleNodes() {
+      const attrs = this.getChartState();
+      const nodes = [];
+      if (attrs.root) attrs.root.eachBefore((d) => nodes.push(d));
+      return nodes;
+    }
+    // Moves keyboard focus to a node, bringing it into view when needed
+    focusNode(node) {
+      const attrs = this.getChartState();
+      attrs.focusedNodeId = attrs.nodeId(node.data);
+      const element = attrs.nodesWrapper.selectAll("g.node").attr("tabindex", (d) => d === node ? 0 : -1).filter((d) => d === node).node();
+      if (!element) return;
+      element.focus({ preventScroll: true });
+      const svgRect = attrs.svg.node().getBoundingClientRect();
+      const rect = element.getBoundingClientRect();
+      const outside = rect.left < svgRect.left || rect.right > svgRect.right || rect.top < svgRect.top || rect.bottom > svgRect.bottom;
+      if (outside) {
+        this.fit({ nodes: [node], scale: false });
+      }
+    }
+    // Keyboard support, following the WAI-ARIA tree view pattern
+    onNodeKeydown(event, node) {
+      const attrs = this.getChartState();
+      if (event.target !== event.currentTarget) return;
+      const visible = this.getVisibleNodes();
+      const index = visible.indexOf(node);
+      const forward = attrs.isRtl ? "ArrowLeft" : "ArrowRight";
+      const backward = attrs.isRtl ? "ArrowRight" : "ArrowLeft";
+      const hasChildren = !!(node.children || node._children) && !node.data._pagingButton;
+      let target = null;
+      switch (event.key) {
+        case "ArrowDown":
+          target = visible[index + 1];
+          break;
+        case "ArrowUp":
+          target = visible[index - 1];
+          break;
+        case "Home":
+          target = visible[0];
+          break;
+        case "End":
+          target = visible[visible.length - 1];
+          break;
+        case forward:
+          if (node._children && hasChildren) {
+            this.onButtonClick(event, node);
+          } else if (node.children) {
+            target = node.children[0];
+          }
+          break;
+        case backward:
+          if (node.children && hasChildren) {
+            this.onButtonClick(event, node);
+          } else if (node.parent) {
+            target = node.parent;
+          }
+          break;
+        case "Enter":
+          if (node.data._pagingButton) {
+            this.loadPagingNodes(node);
+          } else {
+            attrs.onNodeClick(node, event);
+          }
+          break;
+        case " ":
+        case "Spacebar":
+          if (hasChildren) this.onButtonClick(event, node);
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      if (target) this.focusNode(target);
+    }
     // Toggle children on click.
     onButtonClick(event, d) {
       const attrs = this.getChartState();
@@ -5207,6 +5333,7 @@ var __d3OrgChart = (() => {
           d.children.forEach(({ data }) => data._expanded = true);
         }
       }
+      attrs.focusedNodeId = attrs.nodeId(d.data);
       this.update(d);
       event.stopPropagation();
       attrs.onExpandOrCollapse(d, !!d.children);
@@ -5370,10 +5497,10 @@ var __d3OrgChart = (() => {
       if (!this.isRendered("FIT")) return this;
       const { root: root2 } = attrs;
       let descendants = nodes ? nodes : root2.descendants();
-      const minX = d3.min(descendants, (d) => d.x + attrs.layoutBindings[attrs.layout].nodeLeftX(d));
-      const maxX = d3.max(descendants, (d) => d.x + attrs.layoutBindings[attrs.layout].nodeRightX(d));
-      const minY = d3.min(descendants, (d) => d.y + attrs.layoutBindings[attrs.layout].nodeTopY(d));
-      const maxY = d3.max(descendants, (d) => d.y + attrs.layoutBindings[attrs.layout].nodeBottomY(d));
+      const minX = d3.min(descendants, (d) => d.x + attrs.layoutBindings[attrs.effectiveLayout].nodeLeftX(d));
+      const maxX = d3.max(descendants, (d) => d.x + attrs.layoutBindings[attrs.effectiveLayout].nodeRightX(d));
+      const minY = d3.min(descendants, (d) => d.y + attrs.layoutBindings[attrs.effectiveLayout].nodeTopY(d));
+      const maxY = d3.max(descendants, (d) => d.y + attrs.layoutBindings[attrs.effectiveLayout].nodeBottomY(d));
       this.zoomTreeBounds({
         params: { animate, scale, onCompleted },
         x0: minX - 50,
@@ -5579,11 +5706,34 @@ var __d3OrgChart = (() => {
           location.replace(uri);
         }
       }
+      const themedProperties = [
+        "stroke",
+        "fill",
+        "color",
+        "background-color",
+        "font-family",
+        "border-top-color",
+        "border-right-color",
+        "border-bottom-color",
+        "border-left-color"
+      ];
+      function inlineThemeVariables(source, target) {
+        const style = source.getAttribute && source.getAttribute("style");
+        if (style && style.includes("var(")) {
+          const computed = getComputedStyle(source);
+          themedProperties.forEach((prop) => target.style.setProperty(prop, computed.getPropertyValue(prop)));
+        }
+        for (let i = 0; i < source.children.length; i++) {
+          inlineThemeVariables(source.children[i], target.children[i]);
+        }
+      }
       function serializeString(svg) {
         const xmlns = "http://www.w3.org/2000/xmlns/";
         const xlinkns = "http://www.w3.org/1999/xlink";
         const svgns = "http://www.w3.org/2000/svg";
+        const original = svg;
         svg = svg.cloneNode(true);
+        inlineThemeVariables(original, svg);
         const fragment = window.location.href + "#";
         const walker = document.createTreeWalker(svg, NodeFilter.SHOW_ELEMENT, null, false);
         while (walker.nextNode()) {
