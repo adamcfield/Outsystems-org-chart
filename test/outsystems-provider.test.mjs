@@ -1,5 +1,5 @@
 // Runs the OutSystems UI provider (dist/outsystems/OrgChart.OSUI.js) the way a Reactive block does,
-// against the real OutSystems UI runtime of each supported version.
+// against the real OutSystems UI runtime of each supported version (2.29.0 is the version in use on Dev).
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { openBrowser } from './helpers.mjs';
@@ -76,7 +76,7 @@ const waitForEvents = page => page.waitForTimeout(50);
 // Removed nodes stay in the DOM until the chart's exit transition (400ms) ends
 const waitForTransitions = page => page.waitForTimeout(600);
 
-for (const version of ['2.30.0', '3.0.0']) {
+for (const version of ['2.29.0', '2.30.0', '3.0.0']) {
     describe(`OutSystems UI ${version}`, () => {
         let browser;
         before(async () => { browser = await openBrowser(); });

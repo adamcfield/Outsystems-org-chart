@@ -2,7 +2,7 @@
 
 An OutSystems UI style provider for the chart: the block's inputs and events and the client actions go through
 `OutSystems.OrgChart.OrgChartAPI`, which follows the same lifecycle and response format as the OutSystems UI
-patterns (Carousel, DatePicker, ...). Tested against OutSystems UI 2.30.0 and 3.0.0.
+patterns (Carousel, DatePicker, ...). Tested against OutSystems UI 2.29.0, 2.30.0 and 3.0.0.
 
 ## Files to add to the module
 
